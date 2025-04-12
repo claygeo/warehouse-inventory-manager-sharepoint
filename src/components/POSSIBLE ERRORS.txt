@@ -1,0 +1,8 @@
+4. MonthlyCount.js
+Purpose: Renders either AdminView or CountItems based on userType.
+Analysis:
+This component doesn’t directly query any tables.
+It passes userType to AdminView or CountItems but doesn’t pass selectedLocation to either, which could cause the "No location selected" error you mentioned earlier.
+No direct queries to weekly_counts_hstd, so it’s not the source of the error.
+
+

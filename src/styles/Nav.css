@@ -1,0 +1,32 @@
+/* src/styles/Nav.css */
+.nav-bar {
+  @apply bg-curaleaf-dark text-white py-4 shadow-md;
+}
+
+.nav-container {
+  @apply container flex justify-between items-center;
+}
+
+.nav-title {
+  @apply text-2xl font-bold;
+}
+
+.nav-links {
+  @apply flex justify-center space-x-2 bg-curaleaf-light text-curaleaf-dark rounded-lg p-2;
+}
+
+.nav-link {
+  @apply px-6 py-3 font-semibold rounded-lg transition-all duration-300 hover:bg-curaleaf-teal hover:text-white;
+}
+
+.nav-link-active {
+  @apply bg-curaleaf-teal text-white;
+}
+
+.nav-actions {
+  @apply flex items-center space-x-4;
+}
+
+.nav-logout {
+  @apply text-white hover:text-curaleaf-accent transition-colors;
+}

@@ -1,0 +1,20 @@
+/* src/styles/Login.css */
+.login-container {
+  @apply min-h-screen flex items-center justify-center bg-gradient-to-br from-curaleaf-bg to-curaleaf-light;
+}
+
+.login-card {
+  @apply card max-w-md w-full animate-slide-up;
+}
+
+.login-logo {
+  @apply h-14 mx-auto mb-6;
+}
+
+.login-title {
+  @apply text-3xl font-bold text-curaleaf-dark text-center mb-8;
+}
+
+.login-error {
+  @apply text-red-500 text-sm text-center mb-4 animate-fade-in;
+}
