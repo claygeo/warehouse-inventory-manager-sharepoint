@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import supabase from '../utils/supabaseClient';
 import { DateTime } from 'luxon';
 
@@ -12,11 +12,7 @@ const AuditTrail = ({ userType, selectedLocation }) => {
   const [filterDateStart, setFilterDateStart] = useState('');
   const [filterDateEnd, setFilterDateEnd] = useState('');
 
-  useEffect(() => {
-    fetchAuditData();
-  }, [selectedLocation]);
-
-  const fetchAuditData = async () => {
+  const fetchAuditData = useCallback(async () => {
     try {
       const [countHistory, userSessions, weeklyCounts] = await Promise.all([
         supabase.from('count_history').select('*').eq('location', selectedLocation).order('timestamp', { ascending: false }),
@@ -53,16 +49,16 @@ const AuditTrail = ({ userType, selectedLocation }) => {
           user: 'User',
           icon: '📅',
         })),
-      ].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)); // Sort by timestamp descending
+      ].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
 
       setAuditData(combinedData);
       setFilteredData(combinedData);
     } catch (error) {
       console.error('Error fetching audit data:', error.message);
     }
-  };
+  }, [selectedLocation]);
 
-  const applyFilters = () => {
+  const applyFilters = useCallback(() => {
     let result = [...auditData];
 
     if (filterAction) {
@@ -81,12 +77,16 @@ const AuditTrail = ({ userType, selectedLocation }) => {
     }
 
     setFilteredData(result);
-    setCurrentPage(1); // Reset to first page after filtering
-  };
+    setCurrentPage(1);
+  }, [auditData, filterAction, filterSKU, filterDateStart, filterDateEnd]);
+
+  useEffect(() => {
+    fetchAuditData();
+  }, [fetchAuditData]);
 
   useEffect(() => {
     applyFilters();
-  }, [filterAction, filterSKU, filterDateStart, filterDateEnd]);
+  }, [applyFilters]);
 
   // Pagination logic
   const indexOfLastItem = currentPage * itemsPerPage;
