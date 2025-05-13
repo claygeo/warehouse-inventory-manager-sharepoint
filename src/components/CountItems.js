@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import supabase from '../utils/supabaseClient';
 import { DateTime } from 'luxon';
 
@@ -17,36 +17,10 @@ const CountItems = ({ userType, selectedLocation }) => {
   const quantityInputRef = useRef(null);
   const [showNextButton, setShowNextButton] = useState(false);
   const [showAllSkus, setShowAllSkus] = useState(false);
-  const [selectedSku, setSelectedSku] = useState(null); // For scan history popup
-  const [skuHistory, setSkuHistory] = useState({}); // Cache scan history
+  const [selectedSku, setSelectedSku] = useState(null);
+  const [skuHistory, setSkuHistory] = useState({});
 
-  useEffect(() => {
-    console.log('CountItems mounted with selectedLocation:', selectedLocation);
-    const fetchData = async () => {
-      try {
-        await fetchComponents();
-        await loadCycleProgress();
-        if (selectedLocation === 'HSTD' && window.location.pathname.includes('weekly')) {
-          await fetchHighVolumeSkus();
-          await loadWeeklyProgress();
-        } else if (selectedLocation === 'HSTD') {
-          await fetchHighVolumeSkus(); // Load high-volume SKUs for monthly count too
-        }
-      } catch (error) {
-        setStatus(`Error initializing data: ${error.message}`);
-        setStatusColor('red');
-      }
-    };
-    fetchData();
-  }, [selectedLocation]);
-
-  useEffect(() => {
-    if (isCounting && barcodeInputRef.current) {
-      barcodeInputRef.current.focus();
-    }
-  }, [isCounting]);
-
-  const fetchComponents = async () => {
+  const fetchComponents = useCallback(async () => {
     try {
       const { data, error } = await supabase.from('components').select('*');
       if (error) throw error;
@@ -62,9 +36,9 @@ const CountItems = ({ userType, selectedLocation }) => {
       setStatus(`Error fetching components: ${error.message}`);
       setStatusColor('red');
     }
-  };
+  }, []);
 
-  const fetchHighVolumeSkus = async () => {
+  const fetchHighVolumeSkus = useCallback(async () => {
     try {
       const { data, error } = await supabase
         .from('high_volume_skus')
@@ -80,9 +54,9 @@ const CountItems = ({ userType, selectedLocation }) => {
       setStatus(`Error fetching high-volume SKUs: ${error.message}`);
       setStatusColor('red');
     }
-  };
+  }, []);
 
-  const loadCycleProgress = async () => {
+  const loadCycleProgress = useCallback(async () => {
     const cycleId = `Cycle_${new Date().toISOString().slice(0, 7)}_${selectedLocation}`;
     try {
       const { data, error } = await supabase
@@ -106,9 +80,9 @@ const CountItems = ({ userType, selectedLocation }) => {
       setStatus(`Error loading cycle count progress: ${error.message}`);
       setStatusColor('red');
     }
-  };
+  }, [selectedLocation]);
 
-  const loadWeeklyProgress = async () => {
+  const loadWeeklyProgress = useCallback(async () => {
     const currentDay = DateTime.now().toFormat('EEEE');
     const weeklyId = `Weekly_${DateTime.now().toFormat('yyyy-MM-dd')}_HSTD_${currentDay}`;
     try {
@@ -133,7 +107,33 @@ const CountItems = ({ userType, selectedLocation }) => {
       setStatus(`Error loading weekly count progress: ${error.message}`);
       setStatusColor('red');
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    console.log('CountItems mounted with selectedLocation:', selectedLocation);
+    const fetchData = async () => {
+      try {
+        await fetchComponents();
+        await loadCycleProgress();
+        if (selectedLocation === 'HSTD' && window.location.pathname.includes('weekly')) {
+          await fetchHighVolumeSkus();
+          await loadWeeklyProgress();
+        } else if (selectedLocation === 'HSTD') {
+          await fetchHighVolumeSkus();
+        }
+      } catch (error) {
+        setStatus(`Error initializing data: ${error.message}`);
+        setStatusColor('red');
+      }
+    };
+    fetchData();
+  }, [selectedLocation, fetchComponents, loadCycleProgress, fetchHighVolumeSkus, loadWeeklyProgress]);
+
+  useEffect(() => {
+    if (isCounting && barcodeInputRef.current) {
+      barcodeInputRef.current.focus();
+    }
+  }, [isCounting]);
 
   const startCycleCount = async () => {
     const cycleId = `Cycle_${new Date().toISOString().slice(0, 7)}_${selectedLocation}`;
@@ -285,43 +285,6 @@ const CountItems = ({ userType, selectedLocation }) => {
       case 'HSTD': return component.hstd_quantity ?? 0;
       case '3PL': return component['3pl_quantity'] ?? 0;
       default: return 0;
-    }
-  };
-
-  const updateCycleCount = async (sku, quantity) => {
-    const cycleId = `Cycle_${new Date().toISOString().slice(0, 7)}_${selectedLocation}`;
-    const now = DateTime.now().setZone('UTC').toISO();
-
-    try {
-      const { data: cycleData, error: fetchError } = await supabase
-        .from('cycle_counts')
-        .select('progress, start_date')
-        .eq('id', cycleId)
-        .eq('user_type', 'user')
-        .eq('location', selectedLocation)
-        .maybeSingle();
-
-      if (fetchError) throw fetchError;
-
-      const cycleProgress = cycleData ? { ...cycleData.progress } : {};
-      cycleProgress[sku] = quantity;
-
-      const { error: updateError } = await supabase
-        .from('cycle_counts')
-        .upsert({
-          id: cycleId,
-          start_date: cycleData?.start_date || now,
-          last_updated: now,
-          progress: cycleProgress,
-          completed: false,
-          user_type: 'user',
-          location: selectedLocation,
-        });
-
-      if (updateError) throw updateError;
-    } catch (error) {
-      setStatus(`Error updating cycle count: ${error.message}`);
-      setStatusColor('red');
     }
   };
 
@@ -566,7 +529,6 @@ const CountItems = ({ userType, selectedLocation }) => {
     setShowAllSkus(!showAllSkus);
   };
 
-  // Fetch scan history for a specific SKU
   const fetchSkuHistory = async (sku) => {
     try {
       const startOfMonth = DateTime.now().startOf('month').toISO();
@@ -590,14 +552,12 @@ const CountItems = ({ userType, selectedLocation }) => {
     }
   };
 
-  // Handle double-click on an SKU
   const handleDoubleClick = (sku) => {
     if (highVolumeSkus.includes(sku) && selectedLocation === 'HSTD') {
       fetchSkuHistory(sku);
     }
   };
 
-  // Clear scan history for the selected SKU
   const clearSkuHistory = async () => {
     if (!selectedSku) return;
 
@@ -619,7 +579,6 @@ const CountItems = ({ userType, selectedLocation }) => {
 
       if (error) throw error;
 
-      // Refresh the history after clearing
       setSkuHistory({ [selectedSku]: [] });
       setStatus(`Scan history for ${selectedSku} cleared successfully.`);
       setStatusColor('green');
@@ -789,7 +748,6 @@ const CountItems = ({ userType, selectedLocation }) => {
         </p>
       )}
 
-      {/* Scan History Popup */}
       {selectedSku && skuHistory[selectedSku] && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full">
