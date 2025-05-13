@@ -13,6 +13,11 @@ const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     persistSession: true,
     detectSessionInUrl: true,
   },
+  global: {
+    headers: {
+      Accept: 'application/json',
+    },
+  },
 });
 
 export default supabase;
