@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import supabase from '../utils/supabaseClient';
 
-const PrintSettings = () => {
+const PrintSettings = ({ selectedLocation }) => {
   const [components, setComponents] = useState([]);
   const [selectedComponents, setSelectedComponents] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
@@ -13,6 +13,16 @@ const PrintSettings = () => {
   useEffect(() => {
     fetchComponents();
   }, []);
+
+  const getQuantityField = (location) => {
+    const quantityFieldMap = {
+      'MtD': 'mtd_quantity',
+      'FtP': 'ftp_quantity',
+      'HSTD': 'hstd_quantity',
+      '3PL': '3pl_quantity',
+    };
+    return quantityFieldMap[location] || 'hstd_quantity';
+  };
 
   const fetchComponents = async () => {
     try {
@@ -36,21 +46,23 @@ const PrintSettings = () => {
       return;
     }
 
+    const quantityField = getQuantityField(selectedLocation);
     const selected = components
       .filter((comp) => selectedComponents.includes(comp.id))
       .map(comp => ({
         id: comp.id,
         barcode: comp.barcode,
         description: comp.description || '',
-        quantity: comp.quantity || 0,
-        location: comp.location || 'Warehouse',
+        quantity: comp[quantityField] || 0,
+        location: selectedLocation || 'Warehouse',
       }));
 
     const [width, height] = labelSize.split('x').map(Number);
+    const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api/generate-labels';
 
     try {
       const response = await axios.post(
-        'http://localhost:5000/api/generate-labels',
+        API_URL,
         { components: selected, includeId, labelSize: { width, height } },
         { responseType: 'blob' }
       );
@@ -64,6 +76,7 @@ const PrintSettings = () => {
       setStatus('Labels printed successfully!');
     } catch (error) {
       setStatus(`Error: ${error.message}`);
+      console.error('Print error:', error);
     }
   };
 

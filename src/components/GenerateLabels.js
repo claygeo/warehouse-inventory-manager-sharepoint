@@ -26,7 +26,7 @@ const GenerateLabels = ({ selectedLocation }) => {
           if (parts.length === 3) {
             [id, description, quantity] = parts;
             components.push({
-              id,
+              id: isValidId(id) ? parseInt(id) : null,
               barcode: id,
               description,
               [getQuantityField(selectedLocation)]: parseInt(quantity) || 0,
@@ -34,9 +34,9 @@ const GenerateLabels = ({ selectedLocation }) => {
           } else if (parts.length === 2) {
             [id, quantity] = parts;
             components.push({
-              id,
+              id: isValidId(id) ? parseInt(id) : null,
               barcode: id,
-              description: '', // Optional, defaults to empty string
+              description: '',
               [getQuantityField(selectedLocation)]: parseInt(quantity) || 0,
             });
           }
@@ -48,7 +48,7 @@ const GenerateLabels = ({ selectedLocation }) => {
         if (parts.length === 3) {
           [id, description, quantity] = parts;
           components.push({
-            id,
+            id: isValidId(id) ? parseInt(id) : null,
             barcode: id,
             description,
             [getQuantityField(selectedLocation)]: parseInt(quantity) || 0,
@@ -56,9 +56,9 @@ const GenerateLabels = ({ selectedLocation }) => {
         } else if (parts.length === 2) {
           [id, quantity] = parts;
           components.push({
-            id,
+            id: isValidId(id) ? parseInt(id) : null,
             barcode: id,
-            description: '', // Optional, defaults to empty string
+            description: '',
             [getQuantityField(selectedLocation)]: parseInt(quantity) || 0,
           });
         } else {
@@ -68,7 +68,16 @@ const GenerateLabels = ({ selectedLocation }) => {
     });
 
     console.log('Parsed components:', components);
-    return components;
+    return components.filter(comp => comp.id !== null); // Exclude invalid IDs
+  };
+
+  const isValidId = (id) => {
+    const idNum = parseInt(id);
+    if (isNaN(idNum) || idNum.toString() !== id.trim()) {
+      setStatus(`Error: ID "${id}" must be a valid integer.`);
+      return false;
+    }
+    return true;
   };
 
   const getQuantityField = (location) => {
@@ -80,7 +89,7 @@ const GenerateLabels = ({ selectedLocation }) => {
     };
     if (!quantityFieldMap[location]) {
       console.error(`Invalid location: ${location}. Defaulting to 'hstd_quantity'.`);
-      return 'hstd_quantity'; // Fallback to HSTD if invalid
+      return 'hstd_quantity';
     }
     return quantityFieldMap[location];
   };
@@ -105,7 +114,7 @@ const GenerateLabels = ({ selectedLocation }) => {
           if (parts.length === 3) {
             const [id, description, quantity] = parts;
             return {
-              id: id.trim(),
+              id: isValidId(id.trim()) ? parseInt(id.trim()) : null,
               barcode: id.trim(),
               description: description.trim(),
               [getQuantityField(selectedLocation)]: parseInt(quantity) || 0,
@@ -113,19 +122,21 @@ const GenerateLabels = ({ selectedLocation }) => {
           } else if (parts.length === 2) {
             const [id, quantity] = parts;
             return {
-              id: id.trim(),
+              id: isValidId(id.trim()) ? parseInt(id.trim()) : null,
               barcode: id.trim(),
-              description: '', // Optional, defaults to empty string
+              description: '',
               [getQuantityField(selectedLocation)]: parseInt(quantity) || 0,
             };
           } else {
             setStatus('Error: Invalid CSV format. Expected "ID,Description,Quantity" or "ID,Quantity".');
             return null;
           }
-        }).filter(comp => comp !== null);
+        }).filter(comp => comp !== null && comp.id !== null);
         console.log('Parsed components from file:', components);
         if (components.length > 0) {
           processComponents(components);
+        } else {
+          setStatus('No valid components found in CSV.');
         }
       };
       reader.readAsText(file);
@@ -163,14 +174,13 @@ const GenerateLabels = ({ selectedLocation }) => {
               mtd_quantity: existing.mtd_quantity || 0,
               ftp_quantity: existing.ftp_quantity || 0,
               hstd_quantity: existing.hstd_quantity || 0,
-              '3pl_quantity': existing['3pl_quantity'] || 0, // Quote the key here
+              '3pl_quantity': existing['3pl_quantity'] || 0,
             };
-            // Update only the selected location's quantity
             currentQuantities[locationField] = newQuantity;
             const totalQuantity = Object.values(currentQuantities).reduce((sum, qty) => sum + qty, 0);
             return {
               ...comp,
-              ...currentQuantities, // Include all location quantities
+              ...currentQuantities,
               total_quantity: totalQuantity,
             };
           } else {
@@ -180,7 +190,7 @@ const GenerateLabels = ({ selectedLocation }) => {
               mtd_quantity: selectedLocation === 'MtD' ? newQuantity : 0,
               ftp_quantity: selectedLocation === 'FtP' ? newQuantity : 0,
               hstd_quantity: selectedLocation === 'HSTD' ? newQuantity : 0,
-              '3pl_quantity': selectedLocation === '3PL' ? newQuantity : 0, // Quote the key here
+              '3pl_quantity': selectedLocation === '3PL' ? newQuantity : 0,
               total_quantity: newQuantity,
             };
           }
@@ -193,15 +203,16 @@ const GenerateLabels = ({ selectedLocation }) => {
 
       console.log('Components synced to Supabase:', data);
 
-      // Generate labels (send only the necessary fields to the API)
+      // Generate labels
       const labelComponents = updatedComponents.map(comp => ({
         id: comp.id,
         barcode: comp.barcode,
         description: comp.description,
         quantity: comp[getQuantityField(selectedLocation)],
       }));
+      const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api/generate-labels';
       const labelResponse = await axios.post(
-        'http://localhost:5000/api/generate-labels',
+        API_URL,
         { components: labelComponents, includeId: true, labelSize: { width: 4, height: 1.5 } },
         { responseType: 'blob' }
       );
@@ -240,7 +251,7 @@ const GenerateLabels = ({ selectedLocation }) => {
             onChange={(e) => setManualInput(e.target.value)}
             className="w-full p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-curaleaf-teal shadow-sm"
             rows="5"
-            placeholder="e.g., SKU123,Widget,10 or SKU123,10"
+            placeholder="e.g., 123,Widget,10 or 123,10"
           />
         </div>
         <div className="mb-6">
