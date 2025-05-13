@@ -21,20 +21,31 @@ const Login = ({ onLogin }) => {
     }
 
     try {
+      // Sign in anonymously (optional, depending on your auth setup)
       const { error: authError } = await supabase.auth.signInAnonymously();
       if (authError) {
+        console.error('Auth error:', authError);
         setError('Failed to create session: ' + authError.message);
         setIsLoading(false);
         return;
       }
 
+      // Query passcodes table
       const { data: passcodeData, error: passcodeError } = await supabase
         .from('passcodes')
         .select('user_type')
         .eq('passcode', passcode)
         .single();
 
-      if (passcodeError || !passcodeData) {
+      if (passcodeError) {
+        console.error('Passcode query error:', passcodeError);
+        await supabase.auth.signOut();
+        setError(`Invalid passcode: ${passcodeError.message}`);
+        setIsLoading(false);
+        return;
+      }
+
+      if (!passcodeData) {
         await supabase.auth.signOut();
         setError('Invalid passcode. Please try again.');
         setIsLoading(false);
@@ -43,10 +54,9 @@ const Login = ({ onLogin }) => {
 
       onLogin(passcodeData.user_type);
     } catch (err) {
-      console.error('Login error:', err);
-      setError('An unexpected error occurred. Please try again.');
+      console.error('Unexpected login error:', err);
+      setError('An unexpected error occurred: ' + err.message);
       await supabase.auth.signOut();
-    } finally {
       setIsLoading(false);
     }
   };
