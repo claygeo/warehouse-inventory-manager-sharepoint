@@ -16,6 +16,28 @@ const AdminView = ({ userType, selectedLocation }) => {
   const [showNextButton, setShowNextButton] = useState(false);
   const [showAllSkus, setShowAllSkus] = useState(false);
 
+  const getCountSource = useCallback(async (sku) => {
+    try {
+      const { data, error } = await supabase
+        .from('count_history')
+        .select('count_type, count_session, timestamp, source, location')
+        .eq('sku', sku)
+        .eq('location', selectedLocation)
+        .order('timestamp', { ascending: false })
+        .limit(1);
+
+      if (error) throw error;
+
+      if (data && data.length > 0) {
+        return data[0].source || 'No source information available';
+      }
+      return 'Not yet counted';
+    } catch (error) {
+      console.error('Error fetching count source:', error.message);
+      return 'Error retrieving source';
+    }
+  }, [selectedLocation]);
+
   const fetchComponents = useCallback(async () => {
     try {
       const { data, error } = await supabase.from('components').select('*');
@@ -32,7 +54,7 @@ const AdminView = ({ userType, selectedLocation }) => {
       setStatus(`Error fetching components: ${error.message}`);
       setStatusColor('red');
     }
-  }, []);
+  }, [getCountSource]);
 
   const loadCycleProgress = useCallback(async () => {
     const cycleId = `Cycle_${new Date().toISOString().slice(0, 7)}`;
@@ -67,12 +89,6 @@ const AdminView = ({ userType, selectedLocation }) => {
     };
     fetchData();
   }, [selectedLocation, fetchComponents, loadCycleProgress]);
-
-  useEffect(() => {
-    if (isCounting && barcodeInputRef.current) {
-      barcodeInputRef.current.focus();
-    }
-  }, [isCounting]);
 
   const startAdminView = async () => {
     const cycleId = `Cycle_${new Date().toISOString().slice(0, 7)}`;
@@ -156,28 +172,6 @@ const AdminView = ({ userType, selectedLocation }) => {
       if (error) throw error;
     } catch (error) {
       console.error('Error logging count action:', error.message);
-    }
-  };
-
-  const getCountSource = async (sku) => {
-    try {
-      const { data, error } = await supabase
-        .from('count_history')
-        .select('count_type, count_session, timestamp, source, location')
-        .eq('sku', sku)
-        .eq('location', selectedLocation)
-        .order('timestamp', { ascending: false })
-        .limit(1);
-
-      if (error) throw error;
-
-      if (data && data.length > 0) {
-        return data[0].source || 'No source information available';
-      }
-      return 'Not yet counted';
-    } catch (error) {
-      console.error('Error fetching count source:', error.message);
-      return 'Error retrieving source';
     }
   };
 
