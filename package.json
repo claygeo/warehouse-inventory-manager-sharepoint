@@ -4,6 +4,7 @@
   "private": true,
   "dependencies": {
     "@supabase/supabase-js": "^2.0.0",
+    "axios": "^1.9.0",
     "canvas": "^2.11.2",
     "chart.js": "^3.0.0",
     "chartjs-adapter-luxon": "^1.0.0",
