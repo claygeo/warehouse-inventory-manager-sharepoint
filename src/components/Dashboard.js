@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import supabase from '../utils/supabaseClient';
 import { DateTime } from 'luxon';
 import { Line, Bar, Chart } from 'react-chartjs-2';
@@ -39,11 +39,10 @@ const Dashboard = ({ selectedLocation }) => {
   const [weeks, setWeeks] = useState([]);
   const [status, setStatus] = useState('');
   const [statusColor, setStatusColor] = useState('');
-  const [selectedGraph, setSelectedGraph] = useState('progressOverTime'); // Default graph
-
+  const [selectedGraph, setSelectedGraph] = useState('progressOverTime');
   const chartRef = useRef(null);
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       await Promise.all([
         fetchProgressOverTime(),
@@ -55,30 +54,9 @@ const Dashboard = ({ selectedLocation }) => {
       setStatus(`Error loading dashboard data: ${error.message}`);
       setStatusColor('red');
     }
-  };
+  }, [fetchProgressOverTime, fetchTopSkus, fetchMostScannedByLocation, fetchWeeklyTrends]);
 
-  useEffect(() => {
-    fetchData();
-
-    const subscription = supabase
-      .channel('count-history-changes')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'count_history' },
-        () => fetchData()
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(subscription);
-      if (chartRef.current) {
-        chartRef.current.destroy();
-        chartRef.current = null;
-      }
-    };
-  }, [selectedLocation]);
-
-  const fetchProgressOverTime = async () => {
+  const fetchProgressOverTime = useCallback(async () => {
     try {
       const { data, error } = await supabase
         .from('count_history')
@@ -96,7 +74,7 @@ const Dashboard = ({ selectedLocation }) => {
       let cumulativeCount = 0;
       const chartData = Object.entries(countsByDate).map(([date, count]) => {
         cumulativeCount += count;
-        return { x: DateTime.fromFormat(date, 'yyyy-MM-dd').toJSDate(), y: cumulativeCount }; // Convert to JS Date
+        return { x: DateTime.fromFormat(date, 'yyyy-MM-dd').toJSDate(), y: cumulativeCount };
       });
 
       setProgressOverTimeData({
@@ -116,9 +94,9 @@ const Dashboard = ({ selectedLocation }) => {
     } catch (error) {
       console.error('Error fetching progress over time:', error.message);
     }
-  };
+  }, []);
 
-  const fetchTopSkus = async () => {
+  const fetchTopSkus = useCallback(async () => {
     try {
       const { data, error } = await supabase
         .from('count_history')
@@ -151,9 +129,9 @@ const Dashboard = ({ selectedLocation }) => {
     } catch (error) {
       console.error('Error fetching top SKUs:', error.message);
     }
-  };
+  }, []);
 
-  const fetchMostScannedByLocation = async () => {
+  const fetchMostScannedByLocation = useCallback(async () => {
     try {
       const { data, error } = await supabase
         .from('count_history')
@@ -206,8 +184,8 @@ const Dashboard = ({ selectedLocation }) => {
             },
             borderColor: '#D94F4F',
             borderWidth: 1,
-            width: ({ chart }) => (chart.chartArea?.width || 0) / locations.length * 0.9, // Larger cells
-            height: ({ chart }) => (chart.chartArea?.height || 0) / topSkus.length * 0.9, // Larger cells
+            width: ({ chart }) => (chart.chartArea?.width || 0) / locations.length * 0.9,
+            height: ({ chart }) => (chart.chartArea?.height || 0) / topSkus.length * 0.9,
           },
         ],
         labels: {
@@ -219,9 +197,9 @@ const Dashboard = ({ selectedLocation }) => {
       console.error('Error fetching most scanned by location:', error.message);
       setMostScannedByLocationData(null);
     }
-  };
+  }, []);
 
-  const fetchWeeklyTrends = async () => {
+  const fetchWeeklyTrends = useCallback(async () => {
     try {
       const { data, error } = await supabase
         .from('weekly_counts_hstd')
@@ -239,7 +217,7 @@ const Dashboard = ({ selectedLocation }) => {
       const countsByDayAndWeek = {};
       data.forEach((entry) => {
         const dt = DateTime.fromISO(entry.last_updated);
-        const dayOfWeek = dt.weekday; // 1 = Monday, 7 = Sunday
+        const dayOfWeek = dt.weekday;
         const weekNumber = dt.weekNumber;
         const key = `${weekNumber}-${dayOfWeek}`;
         countsByDayAndWeek[key] = Object.keys(entry.progress || {}).length;
@@ -272,8 +250,8 @@ const Dashboard = ({ selectedLocation }) => {
             },
             borderColor: '#007A7A',
             borderWidth: 1,
-            width: ({ chart }) => (chart.chartArea?.width || 0) / days.length * 0.9, // Larger cells
-            height: ({ chart }) => (chart.chartArea?.height || 0) / weeksData.length * 0.9, // Larger cells
+            width: ({ chart }) => (chart.chartArea?.width || 0) / days.length * 0.9,
+            height: ({ chart }) => (chart.chartArea?.height || 0) / weeksData.length * 0.9,
           },
         ],
       });
@@ -282,7 +260,28 @@ const Dashboard = ({ selectedLocation }) => {
       setWeeklyTrendsData(null);
       setWeeks([]);
     }
-  };
+  }, [selectedLocation]);
+
+  useEffect(() => {
+    fetchData();
+
+    const subscription = supabase
+      .channel('count-history-changes')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'count_history' },
+        () => fetchData()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(subscription);
+      if (chartRef.current) {
+        chartRef.current.destroy();
+        chartRef.current = null;
+      }
+    };
+  }, [selectedLocation, fetchData]);
 
   const graphOptions = {
     progressOverTime: {
@@ -471,7 +470,6 @@ const Dashboard = ({ selectedLocation }) => {
           </p>
         )}
 
-        {/* Graph Selection Menu */}
         <div className="mb-8 flex justify-center space-x-4">
           {graphMenu.map((graph) => (
             <button
@@ -488,7 +486,6 @@ const Dashboard = ({ selectedLocation }) => {
           ))}
         </div>
 
-        {/* Chart Display */}
         <div className="bg-white p-6 rounded-lg shadow-md" style={{ height: '70vh' }}>
           {renderChart()}
         </div>
