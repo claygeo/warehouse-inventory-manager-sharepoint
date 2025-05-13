@@ -20,6 +20,28 @@ const CountItems = ({ userType, selectedLocation }) => {
   const [selectedSku, setSelectedSku] = useState(null);
   const [skuHistory, setSkuHistory] = useState({});
 
+  const getCountSource = useCallback(async (sku) => {
+    try {
+      const { data, error } = await supabase
+        .from('count_history')
+        .select('count_type, count_session, timestamp, source, location')
+        .eq('sku', sku)
+        .eq('location', selectedLocation)
+        .order('timestamp', { ascending: false })
+        .limit(1);
+
+      if (error) throw error;
+
+      if (data && data.length > 0) {
+        return data[0].source || 'No source information available';
+      }
+      return 'Not yet counted';
+    } catch (error) {
+      console.error('Error fetching count source:', error.message);
+      return 'Error retrieving source';
+    }
+  }, [selectedLocation]);
+
   const fetchComponents = useCallback(async () => {
     try {
       const { data, error } = await supabase.from('components').select('*');
@@ -36,7 +58,7 @@ const CountItems = ({ userType, selectedLocation }) => {
       setStatus(`Error fetching components: ${error.message}`);
       setStatusColor('red');
     }
-  }, []);
+  }, [getCountSource]);
 
   const fetchHighVolumeSkus = useCallback(async () => {
     try {
@@ -128,12 +150,6 @@ const CountItems = ({ userType, selectedLocation }) => {
     };
     fetchData();
   }, [selectedLocation, fetchComponents, loadCycleProgress, fetchHighVolumeSkus, loadWeeklyProgress]);
-
-  useEffect(() => {
-    if (isCounting && barcodeInputRef.current) {
-      barcodeInputRef.current.focus();
-    }
-  }, [isCounting]);
 
   const startCycleCount = async () => {
     const cycleId = `Cycle_${new Date().toISOString().slice(0, 7)}_${selectedLocation}`;
@@ -253,28 +269,6 @@ const CountItems = ({ userType, selectedLocation }) => {
       if (error) throw error;
     } catch (error) {
       console.error('Error logging count action:', error.message);
-    }
-  };
-
-  const getCountSource = async (sku) => {
-    try {
-      const { data, error } = await supabase
-        .from('count_history')
-        .select('count_type, count_session, timestamp, source, location')
-        .eq('sku', sku)
-        .eq('location', selectedLocation)
-        .order('timestamp', { ascending: false })
-        .limit(1);
-
-      if (error) throw error;
-
-      if (data && data.length > 0) {
-        return data[0].source || 'No source information available';
-      }
-      return 'Not yet counted';
-    } catch (error) {
-      console.error('Error fetching count source:', error.message);
-      return 'Error retrieving source';
     }
   };
 
@@ -751,7 +745,7 @@ const CountItems = ({ userType, selectedLocation }) => {
       {selectedSku && skuHistory[selectedSku] && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full">
-            <h3 className="text-lg font-medium text-curaleaf-dark mb-4">Scan History for {selectedSku}</h3>
+            <h3 className="text-lg font-medium text-c viverify-axios-dependencyuraleaf-dark mb-4">Scan History for {selectedSku}</h3>
             {skuHistory[selectedSku].length > 0 ? (
               <ul className="list-disc pl-5 mb-4">
                 {skuHistory[selectedSku].map((entry, idx) => (
