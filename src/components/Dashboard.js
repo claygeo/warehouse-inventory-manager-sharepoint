@@ -42,20 +42,6 @@ const Dashboard = ({ selectedLocation }) => {
   const [selectedGraph, setSelectedGraph] = useState('progressOverTime');
   const chartRef = useRef(null);
 
-  const fetchData = useCallback(async () => {
-    try {
-      await Promise.all([
-        fetchProgressOverTime(),
-        fetchTopSkus(),
-        fetchMostScannedByLocation(),
-        fetchWeeklyTrends(),
-      ]);
-    } catch (error) {
-      setStatus(`Error loading dashboard data: ${error.message}`);
-      setStatusColor('red');
-    }
-  }, [fetchProgressOverTime, fetchTopSkus, fetchMostScannedByLocation, fetchWeeklyTrends]);
-
   const fetchProgressOverTime = useCallback(async () => {
     try {
       const { data, error } = await supabase
@@ -261,6 +247,20 @@ const Dashboard = ({ selectedLocation }) => {
       setWeeks([]);
     }
   }, [selectedLocation]);
+
+  const fetchData = useCallback(async () => {
+    try {
+      await Promise.all([
+        fetchProgressOverTime(),
+        fetchTopSkus(),
+        fetchMostScannedByLocation(),
+        fetchWeeklyTrends(),
+      ]);
+    } catch (error) {
+      setStatus(`Error loading dashboard data: ${error.message}`);
+      setStatusColor('red');
+    }
+  }, [fetchProgressOverTime, fetchTopSkus, fetchMostScannedByLocation, fetchWeeklyTrends]);
 
   useEffect(() => {
     fetchData();
