@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import supabase from '../utils/supabaseClient';
 import { DateTime } from 'luxon';
 
@@ -16,22 +16,7 @@ const AdminView = ({ userType, selectedLocation }) => {
   const [showNextButton, setShowNextButton] = useState(false);
   const [showAllSkus, setShowAllSkus] = useState(false);
 
-  useEffect(() => {
-    console.log('AdminView mounted with selectedLocation:', selectedLocation);
-    const fetchData = async () => {
-      await fetchComponents();
-      await loadCycleProgress();
-    };
-    fetchData();
-  }, [selectedLocation]);
-
-  useEffect(() => {
-    if (isCounting && barcodeInputRef.current) {
-      barcodeInputRef.current.focus();
-    }
-  }, [isCounting]);
-
-  const fetchComponents = async () => {
+  const fetchComponents = useCallback(async () => {
     try {
       const { data, error } = await supabase.from('components').select('*');
       if (error) throw error;
@@ -47,9 +32,9 @@ const AdminView = ({ userType, selectedLocation }) => {
       setStatus(`Error fetching components: ${error.message}`);
       setStatusColor('red');
     }
-  };
+  }, []);
 
-  const loadCycleProgress = async () => {
+  const loadCycleProgress = useCallback(async () => {
     const cycleId = `Cycle_${new Date().toISOString().slice(0, 7)}`;
     try {
       const { data, error } = await supabase
@@ -72,11 +57,26 @@ const AdminView = ({ userType, selectedLocation }) => {
       setStatus(`Error loading cycle count progress: ${error.message}`);
       setStatusColor('red');
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    console.log('AdminView mounted with selectedLocation:', selectedLocation);
+    const fetchData = async () => {
+      await fetchComponents();
+      await loadCycleProgress();
+    };
+    fetchData();
+  }, [selectedLocation, fetchComponents, loadCycleProgress]);
+
+  useEffect(() => {
+    if (isCounting && barcodeInputRef.current) {
+      barcodeInputRef.current.focus();
+    }
+  }, [isCounting]);
 
   const startAdminView = async () => {
     const cycleId = `Cycle_${new Date().toISOString().slice(0, 7)}`;
-    const now = DateTime.now().setZone('UTC').toISO(); // Use UTC for consistency
+    const now = DateTime.now().setZone('UTC').toISO();
     try {
       const { data: existingData, error: fetchError } = await supabase
         .from('cycle_counts')
