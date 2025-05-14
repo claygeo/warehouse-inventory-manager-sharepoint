@@ -1,6 +1,20 @@
+// src/components/CountItems.js
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import supabase from '../utils/supabaseClient';
 import { DateTime } from 'luxon';
+import {
+  fetchComponents,
+  fetchHighVolumeSkus,
+  fetchCycleCounts,
+  fetchWeeklyCountsHstd,
+  fetchCountHistory,
+  insertCountHistory,
+  upsertCycleCounts,
+  upsertWeeklyCountsHstd,
+  updateComponent,
+  deleteCycleCount,
+  deleteWeeklyCount,
+  deleteCountHistory
+} from '../utils/graphClient';
 
 const CountItems = ({ userType, selectedLocation }) => {
   const [components, setComponents] = useState([]);
@@ -22,16 +36,7 @@ const CountItems = ({ userType, selectedLocation }) => {
 
   const getCountSource = useCallback(async (sku) => {
     try {
-      const { data, error } = await supabase
-        .from('count_history')
-        .select('count_type, count_session, timestamp, source, location')
-        .eq('sku', sku)
-        .eq('location', selectedLocation)
-        .order('timestamp', { ascending: false })
-        .limit(1);
-
-      if (error) throw error;
-
+      const data = await fetchCountHistory({ sku, location: selectedLocation });
       if (data && data.length > 0) {
         return data[0].source || 'No source information available';
       }
@@ -42,10 +47,9 @@ const CountItems = ({ userType, selectedLocation }) => {
     }
   }, [selectedLocation]);
 
-  const fetchComponents = useCallback(async () => {
+  const fetchComponentsData = useCallback(async () => {
     try {
-      const { data, error } = await supabase.from('components').select('*');
-      if (error) throw error;
+      const data = await fetchComponents();
       setComponents(data);
 
       const sources = {};
@@ -60,16 +64,10 @@ const CountItems = ({ userType, selectedLocation }) => {
     }
   }, [getCountSource]);
 
-  const fetchHighVolumeSkus = useCallback(async () => {
+  const fetchHighVolumeSkusData = useCallback(async () => {
     try {
-      const { data, error } = await supabase
-        .from('high_volume_skus')
-        .select('sku')
-        .eq('location', 'HSTD');
-
-      if (error) throw error;
-
-      const skus = data.map(item => item.sku);
+      const currentDay = DateTime.now().toFormat('EEEE');
+      const skus = await fetchHighVolumeSkus(currentDay);
       console.log('High-volume SKUs fetched:', skus);
       setHighVolumeSkus(skus);
     } catch (error) {
@@ -81,16 +79,7 @@ const CountItems = ({ userType, selectedLocation }) => {
   const loadCycleProgress = useCallback(async () => {
     const cycleId = `Cycle_${new Date().toISOString().slice(0, 7)}_${selectedLocation}`;
     try {
-      const { data, error } = await supabase
-        .from('cycle_counts')
-        .select('*')
-        .eq('id', cycleId)
-        .eq('user_type', 'user')
-        .eq('location', selectedLocation)
-        .maybeSingle();
-
-      if (error) throw error;
-
+      const data = await fetchCycleCounts(cycleId, selectedLocation);
       if (data) {
         setCycleProgress(data.progress || {});
         setIsCounting(!data.completed);
@@ -109,15 +98,7 @@ const CountItems = ({ userType, selectedLocation }) => {
     const weeklyId = `Weekly_${DateTime.now().toFormat('yyyy-MM-dd')}_HSTD_${currentDay}`;
     try {
       console.log('Loading weekly progress for ID:', weeklyId);
-      const { data, error } = await supabase
-        .from('weekly_counts_hstd')
-        .select('progress, completed')
-        .eq('id', weeklyId)
-        .eq('location', 'HSTD')
-        .maybeSingle();
-
-      if (error) throw error;
-
+      const data = await fetchWeeklyCountsHstd(weeklyId);
       if (data) {
         setWeeklyProgress(data.progress || {});
         setIsCounting(!data.completed);
@@ -135,13 +116,13 @@ const CountItems = ({ userType, selectedLocation }) => {
     console.log('CountItems mounted with selectedLocation:', selectedLocation);
     const fetchData = async () => {
       try {
-        await fetchComponents();
+        await fetchComponentsData();
         await loadCycleProgress();
         if (selectedLocation === 'HSTD' && window.location.pathname.includes('weekly')) {
-          await fetchHighVolumeSkus();
+          await fetchHighVolumeSkusData();
           await loadWeeklyProgress();
         } else if (selectedLocation === 'HSTD') {
-          await fetchHighVolumeSkus();
+          await fetchHighVolumeSkusData();
         }
       } catch (error) {
         setStatus(`Error initializing data: ${error.message}`);
@@ -149,38 +130,26 @@ const CountItems = ({ userType, selectedLocation }) => {
       }
     };
     fetchData();
-  }, [selectedLocation, fetchComponents, loadCycleProgress, fetchHighVolumeSkus, loadWeeklyProgress]);
+  }, [selectedLocation, fetchComponentsData, loadCycleProgress, fetchHighVolumeSkusData, loadWeeklyProgress]);
 
   const startCycleCount = async () => {
     const cycleId = `Cycle_${new Date().toISOString().slice(0, 7)}_${selectedLocation}`;
     const now = DateTime.now().setZone('UTC').toISO();
     try {
-      const { data: existingData, error: fetchError } = await supabase
-        .from('cycle_counts')
-        .select('progress, start_date')
-        .eq('id', cycleId)
-        .eq('user_type', 'user')
-        .eq('location', selectedLocation)
-        .maybeSingle();
-
-      if (fetchError) throw fetchError;
-
+      const existingData = await fetchCycleCounts(cycleId, selectedLocation);
       const existingProgress = existingData ? existingData.progress || {} : {};
       const updatedProgress = { ...existingProgress, ...cycleProgress };
 
-      const { error } = await supabase
-        .from('cycle_counts')
-        .upsert({
-          id: cycleId,
-          start_date: existingData?.start_date || now,
-          last_updated: now,
-          progress: updatedProgress,
-          completed: false,
-          user_type: 'user',
-          location: selectedLocation,
-        });
+      await upsertCycleCounts({
+        id: cycleId,
+        start_date: existingData?.start_date || now,
+        last_updated: now,
+        progress: updatedProgress,
+        completed: false,
+        user_type: 'user',
+        location: selectedLocation
+      });
 
-      if (error) throw error;
       setIsCounting(true);
       setCycleProgress(updatedProgress);
       setStatus('Started cycle count.');
@@ -190,17 +159,15 @@ const CountItems = ({ userType, selectedLocation }) => {
         setWeeklyProgress({});
         const currentDay = DateTime.now().toFormat('EEEE');
         const weeklyId = `Weekly_${DateTime.now().toFormat('yyyy-MM-dd')}_HSTD_${currentDay}`;
-        await supabase
-          .from('weekly_counts_hstd')
-          .upsert({
-            id: weeklyId,
-            date: now,
-            last_updated: now,
-            progress: {},
-            day: currentDay,
-            location: 'HSTD',
-            completed: false,
-          });
+        await upsertWeeklyCountsHstd({
+          id: weeklyId,
+          date: now,
+          last_updated: now,
+          progress: {},
+          day: currentDay,
+          location: 'HSTD',
+          completed: false
+        });
         await loadWeeklyProgress();
       }
     } catch (error) {
@@ -217,22 +184,9 @@ const CountItems = ({ userType, selectedLocation }) => {
     const weeklyId = `Weekly_${DateTime.now().toFormat('yyyy-MM-dd')}_HSTD_${currentDay}`;
 
     try {
-      const { error: cycleError } = await supabase
-        .from('cycle_counts')
-        .delete()
-        .eq('id', cycleId)
-        .eq('user_type', 'user')
-        .eq('location', selectedLocation);
-
-      if (cycleError) throw cycleError;
-
+      await deleteCycleCount(cycleId, selectedLocation);
       if (selectedLocation === 'HSTD' && window.location.pathname.includes('weekly')) {
-        const { error: weeklyError } = await supabase
-          .from('weekly_counts_hstd')
-          .delete()
-          .eq('id', weeklyId)
-          .eq('location', 'HSTD');
-        if (weeklyError) throw weeklyError;
+        await deleteWeeklyCount(weeklyId);
         setWeeklyProgress({});
       }
 
@@ -241,7 +195,7 @@ const CountItems = ({ userType, selectedLocation }) => {
       setIsCounting(false);
       setStatus('Count has been reset.');
       setStatusColor('green');
-      await fetchComponents();
+      await fetchComponentsData();
       if (selectedLocation === 'HSTD' && window.location.pathname.includes('weekly')) {
         await loadWeeklyProgress();
       }
@@ -253,20 +207,16 @@ const CountItems = ({ userType, selectedLocation }) => {
 
   const logCountAction = async (sku, quantity, countType, countSession, source, timestamp) => {
     try {
-      const { error } = await supabase
-        .from('count_history')
-        .insert({
-          sku,
-          quantity,
-          count_type: countType,
-          count_session: countSession,
-          user_type: userType,
-          source,
-          timestamp,
-          location: selectedLocation,
-        });
-
-      if (error) throw error;
+      await insertCountHistory({
+        sku,
+        quantity,
+        count_type: countType,
+        count_session: countSession,
+        user_type: userType,
+        source,
+        timestamp,
+        location: selectedLocation
+      });
     } catch (error) {
       console.error('Error logging count action:', error.message);
     }
@@ -306,14 +256,8 @@ const CountItems = ({ userType, selectedLocation }) => {
     }
 
     try {
-      const { data: component, error: fetchError } = await supabase
-        .from('components')
-        .select('id, barcode, mtd_quantity, ftp_quantity, hstd_quantity, 3pl_quantity')
-        .eq('barcode', barcode)
-        .single();
-
-      if (fetchError && fetchError.code !== 'PGRST116') throw fetchError;
-
+      const componentsData = await fetchComponents();
+      const component = componentsData.find(c => c.barcode === barcode);
       const enteredQuantity = parseInt(quantity, 10);
       const actualQuantity = component ? getLocationQuantity(component) : 0;
 
@@ -330,14 +274,7 @@ const CountItems = ({ userType, selectedLocation }) => {
       if (selectedLocation === 'HSTD' && window.location.pathname.includes('weekly')) {
         const currentDay = now.toFormat('EEEE');
         const weeklyId = `Weekly_${now.toFormat('yyyy-MM-dd')}_HSTD_${currentDay}`;
-        const { data: weeklyData, error: weeklyError } = await supabase
-          .from('weekly_counts_hstd')
-          .select('progress, day')
-          .eq('id', weeklyId)
-          .eq('location', 'HSTD')
-          .maybeSingle();
-
-        if (weeklyError) throw weeklyError;
+        const weeklyData = await fetchWeeklyCountsHstd(weeklyId);
 
         let conflictFound = false;
         let conflictDay = '';
@@ -363,44 +300,30 @@ const CountItems = ({ userType, selectedLocation }) => {
         }
 
         const newWeeklyProgress = { ...weeklyProgress, [barcode]: enteredQuantity };
-        const { error: weeklyUpdateError } = await supabase
-          .from('weekly_counts_hstd')
-          .upsert({
-            id: weeklyId,
-            date: now.toISO(),
-            progress: newWeeklyProgress,
-            day: currentDay,
-            location: 'HSTD',
-            last_updated: now.toISO(),
-            completed: Object.keys(newWeeklyProgress).length === highVolumeSkus.length,
-          });
-
-        if (weeklyUpdateError) throw weeklyUpdateError;
+        await upsertWeeklyCountsHstd({
+          id: weeklyId,
+          date: now.toISO(),
+          progress: newWeeklyProgress,
+          day: currentDay,
+          location: 'HSTD',
+          last_updated: now.toISO(),
+          completed: Object.keys(newWeeklyProgress).length === highVolumeSkus.length
+        });
 
         setWeeklyProgress(newWeeklyProgress);
         const source = `Counted on ${now.toFormat('MM/dd/yyyy')} at ${now.toFormat('hh:mm:ss a')} using Weekly Count at ${selectedLocation}`;
         await logCountAction(barcode, enteredQuantity, 'user', weeklyId, source, timestamp);
       } else {
-        const { data: weeklyData, error: weeklyError } = await supabase
-          .from('weekly_counts_hstd')
-          .select('progress, day')
-          .eq('location', selectedLocation)
-          .order('last_updated', { ascending: false });
-
-        if (weeklyError && weeklyError.code !== 'PGRST116') throw weeklyError;
-
+        const weeklyData = await fetchWeeklyCountsHstd(selectedLocation);
         let conflictFound = false;
         let conflictDay = '';
         let conflictQuantity = null;
 
         if (weeklyData) {
-          for (const weekly of weeklyData) {
-            if (weekly.progress[barcode] !== undefined && weekly.progress[barcode] !== enteredQuantity) {
-              conflictFound = true;
-              conflictDay = weekly.day;
-              conflictQuantity = weekly.progress[barcode];
-              break;
-            }
+          if (weeklyData.progress[barcode] !== undefined && weeklyData.progress[barcode] !== enteredQuantity) {
+            conflictFound = true;
+            conflictDay = weeklyData.day;
+            conflictQuantity = weeklyData.progress[barcode];
           }
         }
 
@@ -421,7 +344,7 @@ const CountItems = ({ userType, selectedLocation }) => {
           'MtD': 'mtd_quantity',
           'FtP': 'ftp_quantity',
           'HSTD': 'hstd_quantity',
-          '3PL': '3pl_quantity',
+          '3PL': '3pl_quantity'
         };
         const quantityField = quantityFieldMap[selectedLocation];
         console.log('handleScan - Selected Location:', selectedLocation, 'Quantity Field:', quantityField);
@@ -430,47 +353,37 @@ const CountItems = ({ userType, selectedLocation }) => {
           throw new Error(`Invalid location: ${selectedLocation}. Expected one of: MtD, FtP, HSTD, 3PL`);
         }
 
-        if (component) {
-          const { error: updateError } = await supabase
-            .from('components')
-            .update({ [quantityField]: enteredQuantity })
-            .eq('id', component.id);
-
-          if (updateError) throw updateError;
+        const updates = { [quantityField]: enteredQuantity };
+        if (!component) {
+          updates.description = '';
+          updates.total_quantity = enteredQuantity;
         } else {
-          const { error: insertError } = await supabase
-            .from('components')
-            .insert({ barcode, [quantityField]: enteredQuantity });
-
-          if (insertError) throw insertError;
+          const currentQuantities = {
+            mtd_quantity: component.mtd_quantity || 0,
+            ftp_quantity: component.ftp_quantity || 0,
+            hstd_quantity: component.hstd_quantity || 0,
+            '3pl_quantity': component['3pl_quantity'] || 0,
+            quarantine_quantity: component.quarantine_quantity || 0
+          };
+          currentQuantities[quantityField] = enteredQuantity;
+          updates.total_quantity = Object.values(currentQuantities).reduce((sum, qty) => sum + qty, 0);
         }
+
+        await updateComponent(barcode, updates);
 
         const cycleId = `Cycle_${new Date().toISOString().slice(0, 7)}_${selectedLocation}`;
         const newCycleProgress = { ...cycleProgress, [barcode]: enteredQuantity };
 
-        const { data: cycleData, error: cycleFetchError } = await supabase
-          .from('cycle_counts')
-          .select('start_date')
-          .eq('id', cycleId)
-          .eq('user_type', 'user')
-          .eq('location', selectedLocation)
-          .maybeSingle();
-
-        if (cycleFetchError) throw cycleFetchError;
-
-        const { error: cycleUpdateError } = await supabase
-          .from('cycle_counts')
-          .upsert({
-            id: cycleId,
-            start_date: cycleData?.start_date || timestamp,
-            last_updated: timestamp,
-            progress: newCycleProgress,
-            completed: Object.keys(newCycleProgress).length === components.length,
-            user_type: 'user',
-            location: selectedLocation,
-          });
-
-        if (cycleUpdateError) throw cycleUpdateError;
+        const cycleData = await fetchCycleCounts(cycleId, selectedLocation);
+        await upsertCycleCounts({
+          id: cycleId,
+          start_date: cycleData?.start_date || timestamp,
+          last_updated: timestamp,
+          progress: newCycleProgress,
+          completed: Object.keys(newCycleProgress).length === components.length,
+          user_type: 'user',
+          location: selectedLocation
+        });
 
         setCycleProgress(newCycleProgress);
         const source = `Counted on ${now.toFormat('MM/dd/yyyy')} at ${now.toFormat('hh:mm:ss a')} using Monthly Count at ${selectedLocation}`;
@@ -484,7 +397,7 @@ const CountItems = ({ userType, selectedLocation }) => {
       setStatusColor('green');
       setShowNextButton(true);
 
-      await fetchComponents();
+      await fetchComponentsData();
     } catch (error) {
       setStatus(`Error updating quantity: ${error.message}`);
       setStatusColor('red');
@@ -527,17 +440,11 @@ const CountItems = ({ userType, selectedLocation }) => {
     try {
       const startOfMonth = DateTime.now().startOf('month').toISO();
       const endOfMonth = DateTime.now().endOf('month').toISO();
-      const { data, error } = await supabase
-        .from('count_history')
-        .select('timestamp, quantity')
-        .eq('sku', sku)
-        .eq('location', 'HSTD')
-        .gte('timestamp', startOfMonth)
-        .lte('timestamp', endOfMonth)
-        .order('timestamp', { ascending: true });
-
-      if (error) throw error;
-
+      const data = await fetchCountHistory({
+        sku,
+        location: 'HSTD',
+        timestamp: `gte.${startOfMonth} and lte.${endOfMonth}`
+      });
       setSkuHistory({ [sku]: data });
       setSelectedSku(sku);
     } catch (error) {
@@ -563,16 +470,7 @@ const CountItems = ({ userType, selectedLocation }) => {
     try {
       const startOfMonth = DateTime.now().startOf('month').toISO();
       const endOfMonth = DateTime.now().endOf('month').toISO();
-      const { error } = await supabase
-        .from('count_history')
-        .delete()
-        .eq('sku', selectedSku)
-        .eq('location', 'HSTD')
-        .gte('timestamp', startOfMonth)
-        .lte('timestamp', endOfMonth);
-
-      if (error) throw error;
-
+      await deleteCountHistory(selectedSku, startOfMonth, endOfMonth, 'HSTD');
       setSkuHistory({ [selectedSku]: [] });
       setStatus(`Scan history for ${selectedSku} cleared successfully.`);
       setStatusColor('green');
@@ -745,7 +643,7 @@ const CountItems = ({ userType, selectedLocation }) => {
       {selectedSku && skuHistory[selectedSku] && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full">
-            <h3 className="text-lg font-medium text-c viverify-axios-dependencyuraleaf-dark mb-4">Scan History for {selectedSku}</h3>
+            <h3 className="text-lg font-medium text-curaleaf-dark mb-4">Scan History for {selectedSku}</h3>
             {skuHistory[selectedSku].length > 0 ? (
               <ul className="list-disc pl-5 mb-4">
                 {skuHistory[selectedSku].map((entry, idx) => (
