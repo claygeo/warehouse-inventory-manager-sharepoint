@@ -7,10 +7,11 @@ import WeeklyCount from './components/WeeklyCount';
 import Login from './components/Login';
 import Graphs from './components/Dashboard';
 import Overview from './components/Overview';
-import AuditTrail from './components/AuditTrail'; // New component
+import AuditTrail from './components/AuditTrail';
 import LocationSelection from './components/LocationSelection';
 import ErrorBoundary from './components/ErrorBoundary';
-import supabase from './utils/supabaseClient';
+import { getCurrentUser, logout } from './utils/authProvider';
+import { insertUserSession } from './utils/graphClient';
 import './styles/Nav.css';
 
 const App = () => {
@@ -23,14 +24,14 @@ const App = () => {
     const checkSession = async () => {
       const storedLocation = localStorage.getItem('selectedLocation');
       const storedUserType = localStorage.getItem('userType');
-      const { data: session } = await supabase.auth.getSession();
+      const user = await getCurrentUser();
 
-      if (session?.session && storedLocation && storedUserType) {
+      if (user && storedLocation && storedUserType) {
         setIsAuthenticated(true);
         setUserType(storedUserType);
         setSelectedLocation(storedLocation);
       } else {
-        await supabase.auth.signOut();
+        await logout();
         setIsAuthenticated(false);
         setUserType('');
         setSelectedLocation('');
@@ -41,22 +42,6 @@ const App = () => {
     };
 
     checkSession();
-
-    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === 'SIGNED_IN') {
-        setIsAuthenticated(true);
-      } else if (event === 'SIGNED_OUT') {
-        setIsAuthenticated(false);
-        setUserType('');
-        setSelectedLocation('');
-        localStorage.removeItem('userType');
-        localStorage.removeItem('selectedLocation');
-      }
-    });
-
-    return () => {
-      authListener.subscription.unsubscribe();
-    };
   }, []);
 
   const handleLogin = async (type) => {
@@ -65,29 +50,31 @@ const App = () => {
     setIsAuthenticated(true);
   };
 
-  const handleLocationSelect = (location) => {
+  const handleLocationSelect = async (location) => {
     if (!['MtD', 'FtP', 'HSTD', '3PL'].includes(location)) {
       console.error('Invalid location selected:', location);
       return;
     }
     setSelectedLocation(location);
     localStorage.setItem('selectedLocation', location);
+
+    const user = await getCurrentUser();
+    if (user) {
+      await insertUserSession({
+        user_id: user.id,
+        location,
+        created_at: new Date().toISOString(),
+      });
+    }
   };
 
   const handleLogout = async () => {
-    const { data: userData } = await supabase.auth.getUser();
-    let userId = userData?.user?.id;
-
-    await supabase.auth.signOut();
+    await logout();
     setIsAuthenticated(false);
     setUserType('');
     setSelectedLocation('');
     localStorage.removeItem('userType');
     localStorage.removeItem('selectedLocation');
-
-    if (userId) {
-      await supabase.from('user_sessions').delete().eq('user_id', userId);
-    }
   };
 
   if (loading) {
@@ -117,12 +104,14 @@ const App = () => {
                     <NavLink to="/graphs" className={({ isActive }) => `nav-link ${isActive ? 'nav-link-active' : ''}`}>
                       Graphs
                     </NavLink>
+                    {/* Comment out PDF routes if not using; remove comments if backend auth is set up
                     <NavLink to="/generate-labels" className={({ isActive }) => `nav-link ${isActive ? 'nav-link-active' : ''}`}>
                       Generate Labels
                     </NavLink>
                     <NavLink to="/print-settings" className={({ isActive }) => `nav-link ${isActive ? 'nav-link-active' : ''}`}>
                       Print Settings
                     </NavLink>
+                    */}
                     <NavLink to="/monthly-count" className={({ isActive }) => `nav-link ${isActive ? 'nav-link-active' : ''}`}>
                       Monthly Count
                     </NavLink>
@@ -146,8 +135,10 @@ const App = () => {
               <Routes>
                 <Route path="/overview" element={<Overview userType={userType} selectedLocation={selectedLocation} />} />
                 <Route path="/graphs" element={<ErrorBoundary><Graphs selectedLocation={selectedLocation} /></ErrorBoundary>} />
+                {/* Comment out PDF routes if not using; remove comments if backend auth is set up
                 <Route path="/generate-labels" element={<GenerateLabels selectedLocation={selectedLocation} />} />
-                <Route path="/print-settings" element={<PrintSettings />} />
+                <Route path="/print-settings" element={<PrintSettings selectedLocation={selectedLocation} />} />
+                */}
                 <Route path="/monthly-count" element={<MonthlyCount userType={userType} selectedLocation={selectedLocation} />} />
                 <Route
                   path="/weekly-count"
