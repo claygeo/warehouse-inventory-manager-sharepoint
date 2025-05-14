@@ -1,6 +1,7 @@
+// src/components/AuditTrail.js
 import React, { useState, useEffect, useCallback } from 'react';
-import supabase from '../utils/supabaseClient';
 import { DateTime } from 'luxon';
+import { fetchCountHistory, fetchWeeklyCountsHstd, fetchUserSessions } from '../utils/graphClient';
 
 const AuditTrail = ({ userType, selectedLocation }) => {
   const [auditData, setAuditData] = useState([]);
@@ -15,17 +16,13 @@ const AuditTrail = ({ userType, selectedLocation }) => {
   const fetchAuditData = useCallback(async () => {
     try {
       const [countHistory, userSessions, weeklyCounts] = await Promise.all([
-        supabase.from('count_history').select('*').eq('location', selectedLocation).order('timestamp', { ascending: false }),
-        supabase.from('user_sessions').select('*').order('created_at', { ascending: false }),
-        supabase.from('weekly_counts_hstd').select('*').eq('location', selectedLocation).order('last_updated', { ascending: false }),
+        fetchCountHistory({ location: selectedLocation }),
+        fetchUserSessions(),
+        fetchWeeklyCountsHstd(selectedLocation),
       ]);
 
-      if (countHistory.error) throw countHistory.error;
-      if (userSessions.error) throw userSessions.error;
-      if (weeklyCounts.error) throw weeklyCounts.error;
-
       const combinedData = [
-        ...countHistory.data.map((entry) => ({
+        ...countHistory.map((entry) => ({
           timestamp: entry.timestamp,
           action: 'Scan',
           sku: entry.sku,
@@ -33,19 +30,19 @@ const AuditTrail = ({ userType, selectedLocation }) => {
           user: entry.user_type === 'admin' ? 'Admin' : 'User',
           icon: '📦',
         })),
-        ...userSessions.data.map((entry) => ({
+        ...userSessions.map((entry) => ({
           timestamp: entry.created_at,
-          action: entry.event_type === 'login' ? 'Login' : 'Logout',
+          action: 'Login', // Graph API version assumes login events only
           sku: '-',
-          details: `${entry.event_type === 'login' ? 'Logged in' : 'Logged out'} at ${selectedLocation}`,
+          details: `Logged in at ${selectedLocation}`,
           user: entry.user_type === 'admin' ? 'Admin' : 'User',
-          icon: entry.event_type === 'login' ? '🔑' : '🚪',
+          icon: '🔑',
         })),
-        ...weeklyCounts.data.map((entry) => ({
+        ...weeklyCounts.map((entry) => ({
           timestamp: entry.last_updated,
           action: 'Weekly Count',
           sku: '-',
-          details: `Completed count for ${Object.keys(entry.progress).length} SKUs on ${entry.day}`,
+          details: `Completed count for ${Object.keys(entry.progress || {}).length} SKUs on ${entry.day}`,
           user: 'User',
           icon: '📅',
         })),
@@ -115,7 +112,6 @@ const AuditTrail = ({ userType, selectedLocation }) => {
                 <option value="">All Actions</option>
                 <option value="Scan">Scan</option>
                 <option value="Login">Login</option>
-                <option value="Logout">Logout</option>
                 <option value="Weekly Count">Weekly Count</option>
               </select>
             </div>
