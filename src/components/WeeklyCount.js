@@ -1,6 +1,19 @@
+// src/components/WeeklyCount.js
 import React, { useState, useEffect, useRef } from 'react';
-import supabase from '../utils/supabaseClient';
 import { DateTime } from 'luxon';
+import {
+  fetchComponents,
+  fetchHighVolumeSkus,
+  fetchWeeklyCountsHstd,
+  fetchCountHistory,
+  upsertWeeklyCountsHstd,
+  insertCountHistory,
+  fetchCycleCounts,
+  upsertCycleCounts,
+  updateComponent,
+  deleteWeeklyCount,
+  deleteCountHistory
+} from '../utils/graphClient';
 
 const WeeklyCount = ({ userType, selectedLocation }) => {
   const [selectedDay, setSelectedDay] = useState('');
@@ -28,65 +41,21 @@ const WeeklyCount = ({ userType, selectedLocation }) => {
     }
   }, [isCounting]);
 
-  useEffect(() => {
-    const subscription = supabase
-      .channel('components-changes')
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'components', filter: `hstd_quantity=neq.NULL` },
-        (payload) => {
-          const updatedBarcode = payload.new.barcode;
-          const updatedQuantity = payload.new.hstd_quantity;
-          if (skusToCount.includes(updatedBarcode)) {
-            setProgress((prev) => ({
-              ...prev,
-              [updatedBarcode]: updatedQuantity,
-            }));
-            setStatus(`Updated ${updatedBarcode} to ${updatedQuantity} from components table.`);
-            setStatusColor('green');
-          }
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(subscription);
-    };
-  }, [skusToCount]);
-
   const loadSkusAndProgress = async (day) => {
     try {
-      // Fetch SKUs from high_volume_skus
-      const { data: skuData, error: skuError } = await supabase
-        .from('high_volume_skus')
-        .select('sku')
-        .eq('day', day)
-        .eq('location', 'HSTD');
-
-      if (skuError) throw skuError;
-
-      const skus = skuData.map((item) => item.sku);
+      const skus = await fetchHighVolumeSkus(day);
       setSkusToCount(skus);
 
-      // Fetch weekly count progress from weekly_counts_hstd
       const countId = `${day}_${new Date().toISOString().split('T')[0]}`;
-      const { data: weeklyData, error: weeklyError } = await supabase
-        .from('weekly_counts_hstd')
-        .select('progress, completed')
-        .eq('id', countId)
-        .eq('location', 'HSTD')
-        .maybeSingle();
-
-      if (weeklyError) throw weeklyError;
-
+      const weeklyData = await fetchWeeklyCountsHstd(selectedLocation);
       let weeklyProgress = {};
-      if (weeklyData) {
-        weeklyProgress = weeklyData.progress || {};
-        setIsCounting(!weeklyData.completed);
+      const matchingData = weeklyData.find(data => data.id === countId);
+      if (matchingData) {
+        weeklyProgress = matchingData.progress || {};
+        setIsCounting(!matchingData.completed);
       } else {
         setIsCounting(false);
       }
-
       setProgress(weeklyProgress);
     } catch (error) {
       setStatus(`Error loading SKUs or progress: ${error.message}`);
@@ -105,19 +74,15 @@ const WeeklyCount = ({ userType, selectedLocation }) => {
     const countId = `${selectedDay}_${new Date().toISOString().split('T')[0]}`;
     const now = DateTime.now().setZone('UTC').toISO();
     try {
-      const { error } = await supabase
-        .from('weekly_counts_hstd')
-        .upsert({
-          id: countId,
-          day: selectedDay,
-          date: now,
-          last_updated: now,
-          progress: progress,
-          completed: false,
-          location: 'HSTD',
-        });
-
-      if (error) throw error;
+      await upsertWeeklyCountsHstd({
+        id: countId,
+        day: selectedDay,
+        date: now,
+        last_updated: now,
+        progress,
+        completed: false,
+        location: 'HSTD'
+      });
       setStatus(`Started weekly count for ${selectedDay}`);
       setStatusColor('green');
     } catch (error) {
@@ -139,44 +104,32 @@ const WeeklyCount = ({ userType, selectedLocation }) => {
 
     const countId = `${selectedDay}_${new Date().toISOString().split('T')[0]}`;
     try {
-      const { data: cycleData, error: cycleError } = await supabase
-        .from('cycle_counts')
-        .select('progress')
-        .eq('id', `Cycle_${new Date().toISOString().slice(0, 7)}_${selectedLocation}`)
-        .eq('user_type', 'user')
-        .eq('location', selectedLocation)
-        .single();
-
-      if (cycleError && cycleError.code !== 'PGRST116') throw cycleError;
-
+      const cycleId = `Cycle_${new Date().toISOString().slice(0, 7)}_${selectedLocation}`;
+      const cycleData = await fetchCycleCounts(cycleId, selectedLocation);
       if (cycleData) {
         const cycleProgress = { ...cycleData.progress };
         Object.keys(progress).forEach((sku) => {
           delete cycleProgress[sku];
         });
-
-        const { error: updateError } = await supabase
-          .from('cycle_counts')
-          .upsert({
-            id: `Cycle_${new Date().toISOString().slice(0, 7)}_${selectedLocation}`,
-            start_date: cycleData.start_date || DateTime.now().setZone('UTC').toISO(),
-            last_updated: DateTime.now().setZone('UTC').toISO(),
-            progress: cycleProgress,
-            completed: false,
-            user_type: 'user',
-            location: selectedLocation,
-          });
-
-        if (updateError) throw updateError;
+        await upsertCycleCounts({
+          id: cycleId,
+          start_date: cycleData.start_date || DateTime.now().setZone('UTC').toISO(),
+          last_updated: DateTime.now().setZone('UTC').toISO(),
+          progress: cycleProgress,
+          completed: false,
+          user_type: 'user',
+          location: selectedLocation
+        });
       }
 
-      const { error } = await supabase
-        .from('weekly_counts_hstd')
-        .delete()
-        .eq('id', countId);
+      // Clear count history for this weekly count
+      const startDate = DateTime.now().startOf('day').toISO();
+      const endDate = DateTime.now().endOf('day').toISO();
+      for (const sku of Object.keys(progress)) {
+        await deleteCountHistory(sku, startDate, endDate, selectedLocation);
+      }
 
-      if (error) throw error;
-
+      await deleteWeeklyCount(countId);
       setProgress({});
       setIsCounting(false);
       await loadSkusAndProgress(selectedDay);
@@ -198,48 +151,36 @@ const WeeklyCount = ({ userType, selectedLocation }) => {
     const completed = Object.keys(newProgress).length === skusToCount.length;
 
     try {
-      const { error: weeklyError } = await supabase
-        .from('weekly_counts_hstd')
-        .upsert({
-          id: countId,
-          day: selectedDay,
-          date: progress.start_date || now,
-          last_updated: now,
-          progress: newProgress,
-          completed,
-          location: 'HSTD',
-        });
+      await upsertWeeklyCountsHstd({
+        id: countId,
+        day: selectedDay,
+        date: progress.start_date || now,
+        last_updated: now,
+        progress: newProgress,
+        completed,
+        location: 'HSTD'
+      });
 
-      if (weeklyError) throw weeklyError;
-
-      const { data: cycleData, error: cycleError } = await supabase
-        .from('cycle_counts')
-        .select('progress')
-        .eq('id', `Cycle_${new Date().toISOString().slice(0, 7)}_${selectedLocation}`)
-        .eq('user_type', 'user')
-        .eq('location', selectedLocation)
-        .single();
-
-      if (cycleError && cycleError.code !== 'PGRST116') throw cycleError;
-
+      const cycleId = `Cycle_${new Date().toISOString().slice(0, 7)}_${selectedLocation}`;
+      const cycleData = await fetchCycleCounts(cycleId, selectedLocation);
       if (cycleData) {
         const cycleProgress = { ...cycleData.progress };
         delete cycleProgress[sku];
-
-        const { error: updateError } = await supabase
-          .from('cycle_counts')
-          .upsert({
-            id: `Cycle_${new Date().toISOString().slice(0, 7)}_${selectedLocation}`,
-            start_date: cycleData.start_date || now,
-            last_updated: now,
-            progress: cycleProgress,
-            completed: false,
-            user_type: 'user',
-            location: selectedLocation,
-          });
-
-        if (updateError) throw updateError;
+        await upsertCycleCounts({
+          id: cycleId,
+          start_date: cycleData.start_date || now,
+          last_updated: now,
+          progress: cycleProgress,
+          completed: false,
+          user_type: 'user',
+          location: selectedLocation
+        });
       }
+
+      // Clear count history for this SKU
+      const startDate = DateTime.now().startOf('day').toISO();
+      const endDate = DateTime.now().endOf('day').toISO();
+      await deleteCountHistory(sku, startDate, endDate, selectedLocation);
 
       setStatus(`Removed ${sku} from count.`);
       setStatusColor('green');
@@ -257,27 +198,17 @@ const WeeklyCount = ({ userType, selectedLocation }) => {
     const completed = Object.keys(progress).length === skusToCount.length;
 
     try {
-      const { data: existingData, error: fetchError } = await supabase
-        .from('weekly_counts_hstd')
-        .select('date')
-        .eq('id', countId)
-        .single();
-
-      if (fetchError && fetchError.code !== 'PGRST116') throw fetchError;
-
-      const { error } = await supabase
-        .from('weekly_counts_hstd')
-        .upsert({
-          id: countId,
-          day: selectedDay,
-          date: existingData?.date || now,
-          last_updated: now,
-          progress,
-          completed,
-          location: 'HSTD',
-        });
-
-      if (error) throw error;
+      const existingData = await fetchWeeklyCountsHstd(selectedLocation);
+      const matchingData = existingData.find(data => data.id === countId);
+      await upsertWeeklyCountsHstd({
+        id: countId,
+        day: selectedDay,
+        date: matchingData?.date || now,
+        last_updated: now,
+        progress,
+        completed,
+        location: 'HSTD'
+      });
 
       setStatus('Progress saved successfully!');
       setStatusColor('green');
@@ -294,20 +225,16 @@ const WeeklyCount = ({ userType, selectedLocation }) => {
 
   const logCountAction = async (sku, quantity, countType, countSession, source, timestamp) => {
     try {
-      const { error } = await supabase
-        .from('count_history')
-        .insert({
-          sku,
-          quantity,
-          count_type: countType,
-          count_session: countSession,
-          user_type: userType,
-          source,
-          timestamp,
-          location: selectedLocation,
-        });
-
-      if (error) throw error;
+      await insertCountHistory({
+        sku,
+        quantity,
+        count_type: countType,
+        count_session: countSession,
+        user_type: userType,
+        source,
+        timestamp,
+        location: selectedLocation
+      });
     } catch (error) {
       console.error('Error logging count action:', error.message);
     }
@@ -318,32 +245,19 @@ const WeeklyCount = ({ userType, selectedLocation }) => {
     const now = DateTime.now().setZone('UTC').toISO();
 
     try {
-      const { data: cycleData, error: fetchError } = await supabase
-        .from('cycle_counts')
-        .select('progress, start_date')
-        .eq('id', cycleId)
-        .eq('user_type', 'user')
-        .eq('location', selectedLocation)
-        .maybeSingle();
-
-      if (fetchError) throw fetchError;
-
+      const cycleData = await fetchCycleCounts(cycleId, selectedLocation);
       const cycleProgress = cycleData ? { ...cycleData.progress } : {};
       cycleProgress[sku] = quantity;
 
-      const { error: updateError } = await supabase
-        .from('cycle_counts')
-        .upsert({
-          id: cycleId,
-          start_date: cycleData?.start_date || now,
-          last_updated: now,
-          progress: cycleProgress,
-          completed: false,
-          user_type: 'user',
-          location: selectedLocation,
-        });
-
-      if (updateError) throw updateError;
+      await upsertCycleCounts({
+        id: cycleId,
+        start_date: cycleData?.start_date || now,
+        last_updated: now,
+        progress: cycleProgress,
+        completed: false,
+        user_type: 'user',
+        location: selectedLocation
+      });
     } catch (error) {
       setStatus(`Error updating cycle count: ${error.message}`);
       setStatusColor('red');
@@ -374,16 +288,10 @@ const WeeklyCount = ({ userType, selectedLocation }) => {
     }
 
     try {
-      const { data: component, error: fetchError } = await supabase
-        .from('components')
-        .select('barcode, hstd_quantity')
-        .eq('barcode', barcode)
-        .single();
-
-      if (fetchError && fetchError.code !== 'PGRST116') throw fetchError;
-
+      const components = await fetchComponents();
+      const component = components.find(c => c.barcode === barcode);
       const enteredQuantity = parseInt(quantity, 10);
-      const actualQuantity = component ? (component.hstd_quantity ?? 0) : 0;
+      const actualQuantity = component ? component.hstd_quantity ?? 0 : 0;
 
       if (actualQuantity !== enteredQuantity) {
         setStatus(`Quantity does not match. Expected: ${actualQuantity}, Entered: ${enteredQuantity}. Please recount.`);
@@ -392,16 +300,8 @@ const WeeklyCount = ({ userType, selectedLocation }) => {
         return;
       }
 
-      const { data: cycleData, error: cycleError } = await supabase
-        .from('cycle_counts')
-        .select('progress')
-        .eq('id', `Cycle_${new Date().toISOString().slice(0, 7)}_${selectedLocation}`)
-        .eq('user_type', 'user')
-        .eq('location', selectedLocation)
-        .single();
-
-      if (cycleError && cycleError.code !== 'PGRST116') throw cycleError;
-
+      const cycleId = `Cycle_${new Date().toISOString().slice(0, 7)}_${selectedLocation}`;
+      const cycleData = await fetchCycleCounts(cycleId, selectedLocation);
       if (cycleData && cycleData.progress[barcode] !== undefined && cycleData.progress[barcode] !== enteredQuantity) {
         if (!window.confirm(`This SKU was previously counted with a quantity of ${cycleData.progress[barcode]} in the cycle count. Do you want to update it to ${enteredQuantity}?`)) {
           setStatus('Count not updated. Please recount if necessary.');
@@ -414,32 +314,10 @@ const WeeklyCount = ({ userType, selectedLocation }) => {
       const newProgress = { ...progress, [barcode]: enteredQuantity };
       setProgress(newProgress);
 
-      const quantityFieldMap = {
-        'MtD': 'mtd_quantity',
-        'FtP': 'ftp_quantity',
-        'HSTD': 'hstd_quantity',
-        '3PL': '3pl_quantity',
-      };
-      const quantityField = quantityFieldMap[selectedLocation];
-      console.log('Selected Location:', selectedLocation, 'Quantity Field:', quantityField);
-
-      if (!quantityField) {
-        throw new Error(`Invalid location: ${selectedLocation}. Expected one of: MtD, FtP, HSTD, 3PL`);
-      }
-
       if (component) {
-        const { error: updateError } = await supabase
-          .from('components')
-          .update({ [quantityField]: enteredQuantity })
-          .eq('barcode', barcode);
-
-        if (updateError) throw updateError;
+        await updateComponent(barcode, { hstd_quantity: enteredQuantity });
       } else {
-        const { error: insertError } = await supabase
-          .from('components')
-          .insert({ barcode, [quantityField]: enteredQuantity });
-
-        if (insertError) throw insertError;
+        await updateComponent(barcode, { hstd_quantity: enteredQuantity, description: '', total_quantity: enteredQuantity });
       }
 
       const now = DateTime.now().setZone('UTC');
@@ -450,27 +328,17 @@ const WeeklyCount = ({ userType, selectedLocation }) => {
       const source = `Counted on ${now.toFormat('MM/dd/yyyy')} at ${now.toFormat('hh:mm:ss a')} using the Weekly Count at ${selectedLocation}`;
       await logCountAction(barcode, enteredQuantity, 'weekly', countId, source, timestamp);
 
-      const { data: existingData, error: fetchError2 } = await supabase
-        .from('weekly_counts_hstd')
-        .select('date')
-        .eq('id', countId)
-        .single();
-
-      if (fetchError2 && fetchError2.code !== 'PGRST116') throw fetchError2;
-
-      const { error: updateWeeklyError } = await supabase
-        .from('weekly_counts_hstd')
-        .upsert({
-          id: countId,
-          day: selectedDay,
-          date: existingData?.date || timestamp,
-          last_updated: timestamp,
-          progress: newProgress,
-          completed: Object.keys(newProgress).length === skusToCount.length,
-          location: 'HSTD',
-        });
-
-      if (updateWeeklyError) throw updateWeeklyError;
+      const existingData = await fetchWeeklyCountsHstd(selectedLocation);
+      const matchingData = existingData.find(data => data.id === countId);
+      await upsertWeeklyCountsHstd({
+        id: countId,
+        day: selectedDay,
+        date: matchingData?.date || timestamp,
+        last_updated: timestamp,
+        progress: newProgress,
+        completed: Object.keys(newProgress).length === skusToCount.length,
+        location: 'HSTD'
+      });
 
       setStatus(actualQuantity !== null ? 'Quantity matches!' : `Counted ${barcode} successfully at ${selectedLocation}!`);
       setStatusColor('green');
