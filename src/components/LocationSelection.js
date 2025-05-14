@@ -1,10 +1,12 @@
+// src/components/LocationSelection.js
 import React, { useState } from 'react';
-import supabase from '../utils/supabaseClient';
+import { getCurrentUser } from '../utils/authProvider';
+import { insertUserSession } from '../utils/graphClient';
+import { DateTime } from 'luxon';
 
 const LocationSelection = ({ onLocationSelect }) => {
   const [location, setLocation] = useState('');
   const [error, setError] = useState('');
-
   const locations = ['MtD', 'FtP', 'HSTD', '3PL'];
 
   const handleSubmit = async (e) => {
@@ -15,20 +17,17 @@ const LocationSelection = ({ onLocationSelect }) => {
     }
 
     try {
-      const { data: userData, error: userError } = await supabase.auth.getUser();
-      if (userError) throw userError;
+      const user = getCurrentUser();
+      if (!user) {
+        setError('Please log in first.');
+        return;
+      }
 
-      const userId = userData.user.id;
-
-      // Insert the selected location into user_sessions
-      const { error: insertError } = await supabase
-        .from('user_sessions')
-        .insert({
-          user_id: userId,
-          location: location,
-        });
-
-      if (insertError) throw insertError;
+      await insertUserSession({
+        user_id: user.localAccountId,
+        location,
+        created_at: DateTime.now().setZone('UTC').toISO()
+      });
 
       onLocationSelect(location);
     } catch (err) {
