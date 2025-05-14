@@ -1,6 +1,16 @@
+// src/components/AdminView.js
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import supabase from '../utils/supabaseClient';
 import { DateTime } from 'luxon';
+import {
+  fetchComponents,
+  fetchCycleCounts,
+  fetchCountHistory,
+  upsertCycleCounts,
+  insertCountHistory,
+  updateComponent,
+  deleteCycleCount,
+  fetchWeeklyCountsHstd
+} from '../utils/graphClient';
 
 const AdminView = ({ userType, selectedLocation }) => {
   const [components, setComponents] = useState([]);
@@ -18,16 +28,7 @@ const AdminView = ({ userType, selectedLocation }) => {
 
   const getCountSource = useCallback(async (sku) => {
     try {
-      const { data, error } = await supabase
-        .from('count_history')
-        .select('count_type, count_session, timestamp, source, location')
-        .eq('sku', sku)
-        .eq('location', selectedLocation)
-        .order('timestamp', { ascending: false })
-        .limit(1);
-
-      if (error) throw error;
-
+      const data = await fetchCountHistory({ sku, location: selectedLocation });
       if (data && data.length > 0) {
         return data[0].source || 'No source information available';
       }
@@ -38,10 +39,9 @@ const AdminView = ({ userType, selectedLocation }) => {
     }
   }, [selectedLocation]);
 
-  const fetchComponents = useCallback(async () => {
+  const fetchComponentsData = useCallback(async () => {
     try {
-      const { data, error } = await supabase.from('components').select('*');
-      if (error) throw error;
+      const data = await fetchComponents();
       setComponents(data);
 
       const sources = {};
@@ -59,15 +59,7 @@ const AdminView = ({ userType, selectedLocation }) => {
   const loadCycleProgress = useCallback(async () => {
     const cycleId = `Cycle_${new Date().toISOString().slice(0, 7)}`;
     try {
-      const { data, error } = await supabase
-        .from('cycle_counts')
-        .select('*')
-        .eq('id', cycleId)
-        .eq('user_type', 'user')
-        .single();
-
-      if (error && error.code !== 'PGRST116') throw error;
-
+      const data = await fetchCycleCounts(cycleId, selectedLocation);
       if (data) {
         setCycleProgress(data.progress || {});
         setIsCounting(!data.completed);
@@ -79,45 +71,35 @@ const AdminView = ({ userType, selectedLocation }) => {
       setStatus(`Error loading cycle count progress: ${error.message}`);
       setStatusColor('red');
     }
-  }, []);
+  }, [selectedLocation]);
 
   useEffect(() => {
     console.log('AdminView mounted with selectedLocation:', selectedLocation);
     const fetchData = async () => {
-      await fetchComponents();
+      await fetchComponentsData();
       await loadCycleProgress();
     };
     fetchData();
-  }, [selectedLocation, fetchComponents, loadCycleProgress]);
+  }, [selectedLocation, fetchComponentsData, loadCycleProgress]);
 
   const startAdminView = async () => {
     const cycleId = `Cycle_${new Date().toISOString().slice(0, 7)}`;
     const now = DateTime.now().setZone('UTC').toISO();
     try {
-      const { data: existingData, error: fetchError } = await supabase
-        .from('cycle_counts')
-        .select('progress, start_date')
-        .eq('id', cycleId)
-        .eq('user_type', 'user')
-        .single();
-
-      if (fetchError && fetchError.code !== 'PGRST116') throw fetchError;
-
+      const existingData = await fetchCycleCounts(cycleId, selectedLocation);
       const existingProgress = existingData ? existingData.progress || {} : {};
       const updatedProgress = { ...existingProgress, ...cycleProgress };
 
-      const { error } = await supabase
-        .from('cycle_counts')
-        .upsert({
-          id: cycleId,
-          start_date: existingData?.start_date || now,
-          last_updated: now,
-          progress: updatedProgress,
-          completed: false,
-          user_type: 'user',
-        });
+      await upsertCycleCounts({
+        id: cycleId,
+        start_date: existingData?.start_date || now,
+        last_updated: now,
+        progress: updatedProgress,
+        completed: false,
+        user_type: 'user',
+        location: selectedLocation
+      });
 
-      if (error) throw error;
       setIsCounting(true);
       setCycleProgress(updatedProgress);
       setStatus('Started admin view.');
@@ -135,14 +117,7 @@ const AdminView = ({ userType, selectedLocation }) => {
 
     const cycleId = `Cycle_${new Date().toISOString().slice(0, 7)}`;
     try {
-      const { error } = await supabase
-        .from('cycle_counts')
-        .delete()
-        .eq('id', cycleId)
-        .eq('user_type', 'user');
-
-      if (error) throw error;
-
+      await deleteCycleCount(cycleId, selectedLocation);
       setCycleProgress({});
       setCountSources({});
       setIsCounting(false);
@@ -156,20 +131,16 @@ const AdminView = ({ userType, selectedLocation }) => {
 
   const logCountAction = async (sku, quantity, countType, countSession, source, timestamp) => {
     try {
-      const { error } = await supabase
-        .from('count_history')
-        .insert({
-          sku,
-          quantity,
-          count_type: countType,
-          count_session: countSession,
-          user_type: userType,
-          source,
-          timestamp,
-          location: selectedLocation,
-        });
-
-      if (error) throw error;
+      await insertCountHistory({
+        sku,
+        quantity,
+        count_type: countType,
+        count_session: countSession,
+        user_type: userType,
+        source,
+        timestamp,
+        location: selectedLocation
+      });
     } catch (error) {
       console.error('Error logging count action:', error.message);
     }
@@ -209,14 +180,8 @@ const AdminView = ({ userType, selectedLocation }) => {
     }
 
     try {
-      const { data: component, error: fetchError } = await supabase
-        .from('components')
-        .select('id, barcode, mtd_quantity, ftp_quantity, hstd_quantity, 3pl_quantity')
-        .eq('barcode', barcode)
-        .single();
-
-      if (fetchError && fetchError.code !== 'PGRST116') throw fetchError;
-
+      const componentsData = await fetchComponents();
+      const component = componentsData.find(c => c.barcode === barcode);
       const enteredQuantity = parseInt(quantity, 10);
       const actualQuantity = component ? getLocationQuantity(component) : 0;
 
@@ -227,19 +192,12 @@ const AdminView = ({ userType, selectedLocation }) => {
         return;
       }
 
-      const { data: weeklyData, error: weeklyError } = await supabase
-        .from('weekly_counts_hstd')
-        .select('progress, day')
-        .eq('location', selectedLocation)
-        .order('last_updated', { ascending: false });
-
-      if (weeklyError && weeklyError.code !== 'PGRST116') throw weeklyError;
-
+      const weeklyData = await fetchWeeklyCountsHstd(selectedLocation);
       let conflictFound = false;
       let conflictDay = '';
       let conflictQuantity = null;
 
-      if (weeklyData) {
+      if (weeklyData && weeklyData.length > 0) {
         for (const weekly of weeklyData) {
           if (weekly.progress[barcode] !== undefined && weekly.progress[barcode] !== enteredQuantity) {
             conflictFound = true;
@@ -267,7 +225,7 @@ const AdminView = ({ userType, selectedLocation }) => {
         'MtD': 'mtd_quantity',
         'FtP': 'ftp_quantity',
         'HSTD': 'hstd_quantity',
-        '3PL': '3pl_quantity',
+        '3PL': '3pl_quantity'
       };
       const quantityField = quantityFieldMap[selectedLocation];
       console.log('handleScan - Selected Location:', selectedLocation, 'Quantity Field:', quantityField);
@@ -276,47 +234,39 @@ const AdminView = ({ userType, selectedLocation }) => {
         throw new Error(`Invalid location: ${selectedLocation}. Expected one of: MtD, FtP, HSTD, 3PL`);
       }
 
-      if (component) {
-        const { error: updateError } = await supabase
-          .from('components')
-          .update({ [quantityField]: enteredQuantity })
-          .eq('id', component.id);
-
-        if (updateError) throw updateError;
+      const updates = { [quantityField]: enteredQuantity };
+      if (!component) {
+        updates.description = '';
+        updates.total_quantity = enteredQuantity;
       } else {
-        const { error: insertError } = await supabase
-          .from('components')
-          .insert({ barcode, [quantityField]: enteredQuantity });
-
-        if (insertError) throw insertError;
+        const currentQuantities = {
+          mtd_quantity: component.mtd_quantity || 0,
+          ftp_quantity: component.ftp_quantity || 0,
+          hstd_quantity: component.hstd_quantity || 0,
+          '3pl_quantity': component['3pl_quantity'] || 0,
+          quarantine_quantity: component.quarantine_quantity || 0
+        };
+        currentQuantities[quantityField] = enteredQuantity;
+        updates.total_quantity = Object.values(currentQuantities).reduce((sum, qty) => sum + qty, 0);
       }
+
+      await updateComponent(barcode, updates);
 
       const cycleId = `Cycle_${new Date().toISOString().slice(0, 7)}`;
       const now = DateTime.now().setZone('UTC');
       const timestamp = now.toISO();
       const newCycleProgress = { ...cycleProgress, [barcode]: enteredQuantity };
 
-      const { data: cycleData, error: cycleFetchError } = await supabase
-        .from('cycle_counts')
-        .select('start_date')
-        .eq('id', cycleId)
-        .eq('user_type', 'user')
-        .single();
-
-      if (cycleFetchError && cycleFetchError.code !== 'PGRST116') throw cycleFetchError;
-
-      const { error: cycleUpdateError } = await supabase
-        .from('cycle_counts')
-        .upsert({
-          id: cycleId,
-          start_date: cycleData?.start_date || timestamp,
-          last_updated: timestamp,
-          progress: newCycleProgress,
-          completed: Object.keys(newCycleProgress).length === components.length,
-          user_type: 'user',
-        });
-
-      if (cycleUpdateError) throw cycleUpdateError;
+      const cycleData = await fetchCycleCounts(cycleId, selectedLocation);
+      await upsertCycleCounts({
+        id: cycleId,
+        start_date: cycleData?.start_date || timestamp,
+        last_updated: timestamp,
+        progress: newCycleProgress,
+        completed: Object.keys(newCycleProgress).length === components.length,
+        user_type: 'user',
+        location: selectedLocation
+      });
 
       setCycleProgress(newCycleProgress);
 
@@ -330,7 +280,7 @@ const AdminView = ({ userType, selectedLocation }) => {
       setStatusColor('green');
       setShowNextButton(true);
 
-      await fetchComponents();
+      await fetchComponentsData();
     } catch (error) {
       setStatus(`Error updating quantity: ${error.message}`);
       setStatusColor('red');
