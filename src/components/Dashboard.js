@@ -1,5 +1,5 @@
+// src/components/Dashboard.js
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import supabase from '../utils/supabaseClient';
 import { DateTime } from 'luxon';
 import { Line, Bar, Chart } from 'react-chartjs-2';
 import {
@@ -12,10 +12,11 @@ import {
   Title,
   Tooltip,
   Legend,
-  TimeScale,
+  TimeScale
 } from 'chart.js';
 import 'chartjs-adapter-luxon';
 import { MatrixController, MatrixElement } from 'chartjs-chart-matrix';
+import { fetchCountHistory, fetchWeeklyCountsHstd } from '../utils/graphClient';
 
 ChartJS.register(
   CategoryScale,
@@ -44,13 +45,7 @@ const Dashboard = ({ selectedLocation }) => {
 
   const fetchProgressOverTime = useCallback(async () => {
     try {
-      const { data, error } = await supabase
-        .from('count_history')
-        .select('timestamp')
-        .order('timestamp', { ascending: true });
-
-      if (error) throw error;
-
+      const data = await fetchCountHistory();
       const countsByDate = {};
       data.forEach((entry) => {
         const date = DateTime.fromISO(entry.timestamp).toFormat('yyyy-MM-dd');
@@ -73,9 +68,9 @@ const Dashboard = ({ selectedLocation }) => {
             fill: true,
             tension: 0.3,
             pointRadius: 4,
-            pointHoverRadius: 6,
-          },
-        ],
+            pointHoverRadius: 6
+          }
+        ]
       });
     } catch (error) {
       console.error('Error fetching progress over time:', error.message);
@@ -84,12 +79,7 @@ const Dashboard = ({ selectedLocation }) => {
 
   const fetchTopSkus = useCallback(async () => {
     try {
-      const { data, error } = await supabase
-        .from('count_history')
-        .select('sku');
-
-      if (error) throw error;
-
+      const data = await fetchCountHistory();
       const skuCounts = {};
       data.forEach((entry) => {
         skuCounts[entry.sku] = (skuCounts[entry.sku] || 0) + 1;
@@ -108,9 +98,9 @@ const Dashboard = ({ selectedLocation }) => {
             backgroundColor: '#FF6B6B',
             borderColor: '#D94F4F',
             borderWidth: 1,
-            hoverBackgroundColor: '#FF8787',
-          },
-        ],
+            hoverBackgroundColor: '#FF8787'
+          }
+        ]
       });
     } catch (error) {
       console.error('Error fetching top SKUs:', error.message);
@@ -119,12 +109,7 @@ const Dashboard = ({ selectedLocation }) => {
 
   const fetchMostScannedByLocation = useCallback(async () => {
     try {
-      const { data, error } = await supabase
-        .from('count_history')
-        .select('sku, location');
-
-      if (error) throw error;
-
+      const data = await fetchCountHistory();
       if (!data || data.length === 0) {
         setMostScannedByLocationData(null);
         return;
@@ -153,7 +138,7 @@ const Dashboard = ({ selectedLocation }) => {
         locations.map((loc, locIndex) => ({
           x: locIndex,
           y: skuIndex,
-          v: skuLocationCounts[sku][loc] || 0,
+          v: skuLocationCounts[sku][loc] || 0
         }))
       ).flat();
 
@@ -171,13 +156,13 @@ const Dashboard = ({ selectedLocation }) => {
             borderColor: '#D94F4F',
             borderWidth: 1,
             width: ({ chart }) => (chart.chartArea?.width || 0) / locations.length * 0.9,
-            height: ({ chart }) => (chart.chartArea?.height || 0) / topSkus.length * 0.9,
-          },
+            height: ({ chart }) => (chart.chartArea?.height || 0) / topSkus.length * 0.9
+          }
         ],
         labels: {
           x: locations,
-          y: topSkus,
-        },
+          y: topSkus
+        }
       });
     } catch (error) {
       console.error('Error fetching most scanned by location:', error.message);
@@ -187,13 +172,7 @@ const Dashboard = ({ selectedLocation }) => {
 
   const fetchWeeklyTrends = useCallback(async () => {
     try {
-      const { data, error } = await supabase
-        .from('weekly_counts_hstd')
-        .select('progress, day, last_updated')
-        .eq('location', selectedLocation);
-
-      if (error) throw error;
-
+      const data = await fetchWeeklyCountsHstd(selectedLocation);
       if (!data || data.length === 0) {
         setWeeklyTrendsData(null);
         setWeeks([]);
@@ -218,7 +197,7 @@ const Dashboard = ({ selectedLocation }) => {
           return {
             x: dayIndex,
             y: weekIndex,
-            v: countsByDayAndWeek[key] || 0,
+            v: countsByDayAndWeek[key] || 0
           };
         })
       ).flat();
@@ -237,9 +216,9 @@ const Dashboard = ({ selectedLocation }) => {
             borderColor: '#007A7A',
             borderWidth: 1,
             width: ({ chart }) => (chart.chartArea?.width || 0) / days.length * 0.9,
-            height: ({ chart }) => (chart.chartArea?.height || 0) / weeksData.length * 0.9,
-          },
-        ],
+            height: ({ chart }) => (chart.chartArea?.height || 0) / weeksData.length * 0.9
+          }
+        ]
       });
     } catch (error) {
       console.error('Error fetching weekly trends:', error.message);
@@ -254,7 +233,7 @@ const Dashboard = ({ selectedLocation }) => {
         fetchProgressOverTime(),
         fetchTopSkus(),
         fetchMostScannedByLocation(),
-        fetchWeeklyTrends(),
+        fetchWeeklyTrends()
       ]);
     } catch (error) {
       setStatus(`Error loading dashboard data: ${error.message}`);
@@ -264,24 +243,19 @@ const Dashboard = ({ selectedLocation }) => {
 
   useEffect(() => {
     fetchData();
-
-    const subscription = supabase
-      .channel('count-history-changes')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'count_history' },
-        () => fetchData()
-      )
-      .subscribe();
-
     return () => {
-      supabase.removeChannel(subscription);
       if (chartRef.current) {
         chartRef.current.destroy();
         chartRef.current = null;
       }
     };
   }, [selectedLocation, fetchData]);
+
+  const handleRefresh = () => {
+    fetchData();
+    setStatus('Data refreshed.');
+    setStatusColor('green');
+  };
 
   const graphOptions = {
     progressOverTime: {
@@ -295,29 +269,29 @@ const Dashboard = ({ selectedLocation }) => {
             display: true,
             text: 'Items Scanned Over Time',
             font: { size: 24, family: 'Arial', weight: 'bold' },
-            color: '#333',
+            color: '#333'
           },
           legend: { position: 'top', labels: { font: { size: 16 } } },
           tooltip: {
             callbacks: {
-              label: (context) => `Scanned: ${context.parsed.y} items on ${DateTime.fromJSDate(context.parsed.x).toFormat('MMM dd, yyyy')}`,
-            },
-          },
+              label: (context) => `Scanned: ${context.parsed.y} items on ${DateTime.fromJSDate(context.parsed.x).toFormat('MMM dd, yyyy')}`
+            }
+          }
         },
         scales: {
           x: {
             type: 'time',
             time: { unit: 'day', displayFormats: { day: 'MMM dd' } },
             title: { display: true, text: 'Date', font: { size: 18 } },
-            ticks: { font: { size: 14 } },
+            ticks: { font: { size: 14 } }
           },
           y: {
             title: { display: true, text: 'Total Items', font: { size: 18 } },
             ticks: { font: { size: 14 } },
-            beginAtZero: true,
-          },
-        },
-      },
+            beginAtZero: true
+          }
+        }
+      }
     },
     topSkus: {
       type: 'bar',
@@ -330,27 +304,27 @@ const Dashboard = ({ selectedLocation }) => {
             display: true,
             text: 'Most Frequently Scanned Items',
             font: { size: 24, family: 'Arial', weight: 'bold' },
-            color: '#333',
+            color: '#333'
           },
           legend: { position: 'top', labels: { font: { size: 16 } } },
           tooltip: {
             callbacks: {
-              label: (context) => `${context.label}: Scanned ${context.parsed.y} times`,
-            },
-          },
+              label: (context) => `${context.label}: Scanned ${context.parsed.y} times`
+            }
+          }
         },
         scales: {
           x: {
             title: { display: true, text: 'Item Code', font: { size: 18 } },
-            ticks: { font: { size: 14 }, maxRotation: 45, minRotation: 45 },
+            ticks: { font: { size: 14 }, maxRotation: 45, minRotation: 45 }
           },
           y: {
             title: { display: true, text: 'Times Scanned', font: { size: 18 } },
             ticks: { font: { size: 14 } },
-            beginAtZero: true,
-          },
-        },
-      },
+            beginAtZero: true
+          }
+        }
+      }
     },
     mostScannedByLocation: {
       type: 'matrix',
@@ -363,7 +337,7 @@ const Dashboard = ({ selectedLocation }) => {
             display: true,
             text: 'Top Items by Location (Heatmap)',
             font: { size: 24, family: 'Arial', weight: 'bold' },
-            color: '#333',
+            color: '#333'
           },
           legend: { display: false },
           tooltip: {
@@ -372,25 +346,25 @@ const Dashboard = ({ selectedLocation }) => {
                 const sku = mostScannedByLocationData?.labels.y[context.raw.y] || 'Unknown';
                 const location = mostScannedByLocationData?.labels.x[context.raw.x] || 'Unknown';
                 return `${sku} at ${location}: ${context.raw.v} scans`;
-              },
-            },
-          },
+              }
+            }
+          }
         },
         scales: {
           x: {
             type: 'category',
             labels: ['MtD', 'FtP', 'HSTD', '3PL'],
             title: { display: true, text: 'Location', font: { size: 18 } },
-            ticks: { font: { size: 14 } },
+            ticks: { font: { size: 14 } }
           },
           y: {
             type: 'category',
             labels: mostScannedByLocationData ? mostScannedByLocationData.labels.y : [],
             title: { display: true, text: 'Item Code', font: { size: 18 } },
-            ticks: { font: { size: 14 } },
-          },
-        },
-      },
+            ticks: { font: { size: 14 } }
+          }
+        }
+      }
     },
     weeklyTrends: {
       type: 'matrix',
@@ -403,7 +377,7 @@ const Dashboard = ({ selectedLocation }) => {
             display: true,
             text: `Weekly Scan Trends (${selectedLocation})`,
             font: { size: 24, family: 'Arial', weight: 'bold' },
-            color: '#333',
+            color: '#333'
           },
           legend: { display: false },
           tooltip: {
@@ -412,33 +386,33 @@ const Dashboard = ({ selectedLocation }) => {
                 const day = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][context.raw.x];
                 const week = weeks[context.raw.y] || 'Unknown';
                 return `${day}, Week ${week}: ${context.raw.v} scans`;
-              },
-            },
-          },
+              }
+            }
+          }
         },
         scales: {
           x: {
             type: 'category',
             labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
             title: { display: true, text: 'Day of Week', font: { size: 18 } },
-            ticks: { font: { size: 14 } },
+            ticks: { font: { size: 14 } }
           },
           y: {
             type: 'category',
             labels: weeks.map((week) => `Week ${week}`),
             title: { display: true, text: 'Week', font: { size: 18 } },
-            ticks: { font: { size: 14 } },
-          },
-        },
-      },
-    },
+            ticks: { font: { size: 14 } }
+          }
+        }
+      }
+    }
   };
 
   const graphMenu = [
     { id: 'progressOverTime', label: 'Progress Over Time (Line)' },
     { id: 'topSkus', label: 'Top SKUs (Bar)' },
     { id: 'mostScannedByLocation', label: 'Top Items by Location (Heatmap)' },
-    { id: 'weeklyTrends', label: 'Weekly Trends (Heatmap)' },
+    { id: 'weeklyTrends', label: 'Weekly Trends (Heatmap)' }
   ];
 
   const renderChart = () => {
@@ -484,6 +458,12 @@ const Dashboard = ({ selectedLocation }) => {
               {graph.label}
             </button>
           ))}
+          <button
+            onClick={handleRefresh}
+            className="px-4 py-2 rounded-lg font-medium bg-curaleaf-teal text-white hover:bg-curaleaf-accent"
+          >
+            Refresh Data
+          </button>
         </div>
 
         <div className="bg-white p-6 rounded-lg shadow-md" style={{ height: '70vh' }}>
