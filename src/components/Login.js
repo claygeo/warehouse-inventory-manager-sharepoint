@@ -1,91 +1,55 @@
+// src/components/Login.js
 import React, { useState } from 'react';
-import supabase from '../utils/supabaseClient';
+import { login } from '../utils/authProvider';
 import '../styles/Login.css';
 
 const Login = ({ onLogin }) => {
-  const [passcode, setPasscode] = useState('');
+  const [userType, setUserType] = useState('');
   const [error, setError] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setError('');
-    setIsLoading(true);
-
-    console.log('Attempting login with passcode:', passcode);
-
-    if (!passcode) {
-      setError('Please enter a passcode.');
-      setIsLoading(false);
+    if (!userType) {
+      setError('Please select a user type');
       return;
     }
 
     try {
-      // Sign in anonymously (optional, depending on your auth setup)
-      const { error: authError } = await supabase.auth.signInAnonymously();
-      if (authError) {
-        console.error('Auth error:', authError);
-        setError('Failed to create session: ' + authError.message);
-        setIsLoading(false);
-        return;
-      }
-
-      // Query passcodes table
-      const { data: passcodeData, error: passcodeError } = await supabase
-        .from('passcodes')
-        .select('user_type')
-        .eq('passcode', passcode)
-        .single();
-
-      if (passcodeError) {
-        console.error('Passcode query error:', passcodeError);
-        await supabase.auth.signOut();
-        setError(`Invalid passcode: ${passcodeError.message}`);
-        setIsLoading(false);
-        return;
-      }
-
-      if (!passcodeData) {
-        await supabase.auth.signOut();
-        setError('Invalid passcode. Please try again.');
-        setIsLoading(false);
-        return;
-      }
-
-      onLogin(passcodeData.user_type);
+      await login();
+      onLogin(userType);
     } catch (err) {
-      console.error('Unexpected login error:', err);
-      setError('An unexpected error occurred: ' + err.message);
-      await supabase.auth.signOut();
-      setIsLoading(false);
+      console.error('Login error:', err);
+      setError('Failed to log in. Please check your credentials or configuration.');
     }
   };
 
   return (
     <div className="login-container">
       <div className="login-card">
-        <img src="/curaleaf.png" alt="Curaleaf Logo" className="login-logo" />
-        <h2 className="login-title">Curaleaf Inventory Manager</h2>
+        <img src="/logo.png" alt="Curaleaf Logo" className="login-logo" />
+        <h2 className="login-title">Curaleaf Inventory Login</h2>
+        {error && <p className="login-error">{error}</p>}
         <form onSubmit={handleSubmit}>
           <div className="mb-6">
-            <label className="block text-curaleaf-dark mb-2 font-medium">Enter Passcode</label>
-            <input
-              type="password"
-              value={passcode}
-              onChange={(e) => setPasscode(e.target.value)}
-              className="w-full"
-              placeholder="••••"
-              disabled={isLoading}
-            />
+            <label className="block text-curaleaf-dark mb-2 font-medium">User Type:</label>
+            <select
+              value={userType}
+              onChange={(e) => setUserType(e.target.value)}
+              className="w-full p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-curaleaf-teal shadow-sm"
+            >
+              <option value="">Select User Type</option>
+              <option value="admin">Admin</option>
+              <option value="user">User</option>
+            </select>
           </div>
-          {error && <p className="login-error">{error}</p>}
-          <button
-            type="submit"
-            className={`btn-primary w-full ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
-            disabled={isLoading}
-          >
-            {isLoading ? 'Logging in...' : 'Login'}
-          </button>
+          <div className="text-center">
+            <button
+              type="submit"
+              className="bg-curaleaf-teal text-white p-3 rounded-lg hover:bg-curaleaf-accent transition-all w-full shadow-sm"
+            >
+              Login with Microsoft
+            </button>
+          </div>
         </form>
       </div>
     </div>
