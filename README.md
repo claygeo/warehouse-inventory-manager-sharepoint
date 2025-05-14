@@ -6,7 +6,7 @@ A React-based web application for inventory management, integrated with Microsof
 - [Features](#features)
 - [Prerequisites](#prerequisites)
 - [Setup](#setup)
-- [Sharepoint Setup][#sharepoint-setup)
+- [Sharepoint Setup](#sharepoint-setup)
 - [Steps](#steps)
 - [Permissions](#permissions)
 - [Visuals](#visuals)
